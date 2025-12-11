@@ -21,8 +21,21 @@ GPU_ENABLED="false"
 GPU_ARCH="sm_70"
 CUDA_PATH=""
 
+# Check if nvcc is in PATH
 if command -v nvcc &> /dev/null; then
     CUDA_PATH=$(dirname $(dirname $(which nvcc)))
+# Check common CUDA installation paths
+elif [ -d "/usr/local/cuda" ]; then
+    CUDA_PATH="/usr/local/cuda"
+elif [ -d "/usr/local/cuda-12" ]; then
+    CUDA_PATH="/usr/local/cuda-12"
+elif [ -d "/usr/local/cuda-11" ]; then
+    CUDA_PATH="/usr/local/cuda-11"
+elif [ -d "/opt/cuda" ]; then
+    CUDA_PATH="/opt/cuda"
+fi
+
+if [ -n "$CUDA_PATH" ] && [ -f "$CUDA_PATH/bin/nvcc" ]; then
     echo "CUDA found: $CUDA_PATH"
 
     # Get GPU architecture

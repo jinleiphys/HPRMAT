@@ -65,8 +65,14 @@ $(SRCDIR)/precision.o: $(SRCDIR)/precision.F90
 $(SRCDIR)/constants.o: $(SRCDIR)/constants.F90 $(SRCDIR)/precision.o
 	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
 
+# rmat_solvers depends on gpu_solver_interface when GPU enabled
+ifeq ($(GPU_ENABLED),true)
+$(SRCDIR)/rmat_solvers.o: $(SRCDIR)/rmat_solvers.F90 $(SRCDIR)/precision.o $(SRCDIR)/gpu_solver_interface.o
+	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
+else
 $(SRCDIR)/rmat_solvers.o: $(SRCDIR)/rmat_solvers.F90 $(SRCDIR)/precision.o
 	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
+endif
 
 $(SRCDIR)/rmatrix_hp.o: $(SRCDIR)/rmatrix_hp.F90
 	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@

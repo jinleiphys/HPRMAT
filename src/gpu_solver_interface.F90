@@ -17,9 +17,6 @@ module gpu_solver_interface
   implicit none
   private
 
-  ! Double precision kind parameter (in case precision module is not available)
-  integer, parameter :: dp = kind(1.0d0)
-
   ! Public interface
   public :: gpu_solver_init
   public :: gpu_solver_finalize

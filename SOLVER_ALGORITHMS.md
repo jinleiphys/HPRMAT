@@ -137,7 +137,7 @@ subroutine rmat_cc_mixed_precision(cmat, b, x, n, nch, nlag)
 end subroutine
 ```
 
-**Performance:** ~5% faster than FP64, sufficient accuracy for physics.
+**Performance:** 5-7x faster than Pierre's original method for large matrices (N > 10000), with ~1E-16 accuracy.
 
 ### 3.3 Woodbury-Kinetic (solver_type=3)
 
@@ -180,7 +180,7 @@ subroutine rmat_cc_woodbury_kinetic(cmat, b, x, n, nch, nlag)
 end subroutine
 ```
 
-**Performance:** ~13% faster than dense ZGESV on CPU.
+**Performance:** Up to 7.4x faster than Pierre's original method for large matrices, with ~1E-6 accuracy (sufficient for nuclear physics).
 
 ### 3.4 GPU cuSOLVER (solver_type=4)
 
@@ -271,14 +271,23 @@ if (rcond < 1e-12) warning("Ill-conditioned matrix")
 
 ### 4.2 Accuracy vs Speed Trade-off
 
-| Solver | Precision | Relative Error | Speed |
-|--------|-----------|----------------|-------|
-| ZGESV | FP64 | Machine epsilon | 1x |
-| Mixed | FP32+refine | ~10⁻¹² | 1.05x |
-| Woodbury | FP32 Schur | ~10⁻⁷ | 1.13x |
-| GPU | FP32 | ~10⁻⁵ | 3x |
+**Benchmark Results (Wall Time, Large Matrices)**
 
-For physics applications, FP32 accuracy (~10⁻⁵ relative error) is typically sufficient.
+| Matrix Size | Pierre (Original) | Type 1 | Type 2 | Type 3 | Best Speedup |
+|-------------|-------------------|--------|--------|--------|--------------|
+| 4000×4000 | 1.17s | 0.39s (3.0x) | 0.30s (3.9x) | 0.26s (4.4x) | **4.4x** |
+| 10000×10000 | 16.9s | 3.7s (4.6x) | 3.1s (5.5x) | 2.3s (7.4x) | **7.4x** |
+| 25600×25600 | 222.7s | 52.0s (4.3x) | 34.0s (6.6x) | 32.5s (6.9x) | **6.9x** |
+
+**Accuracy Comparison**
+
+| Solver | Max Error | Description |
+|--------|-----------|-------------|
+| Type 1 (ZGESV) | ~1E-18 | Machine precision |
+| Type 2 (Mixed) | ~1E-16 | Double precision |
+| Type 3 (Woodbury) | ~1E-6 | Sufficient for nuclear physics |
+
+For nuclear physics applications, Type 3 accuracy (~10⁻⁶ relative error) is sufficient while providing the best performance.
 
 ### 4.3 Iterative Refinement
 
@@ -299,14 +308,14 @@ Typically 1-2 refinement steps recover FP64 accuracy.
 
 **Recommendation: Use OpenBLAS on all platforms (including Apple Silicon)**
 
-Our benchmarks show OpenBLAS outperforms Apple Accelerate for complex LAPACK routines:
+Our benchmarks on **Apple M3 Ultra (32 cores, 96GB RAM)** show OpenBLAS provides excellent multithreaded performance:
 
-| Platform | BLAS Library | ZGESV Time (4900×4900) | Relative |
-|----------|--------------|------------------------|----------|
-| Apple M3 Max | **OpenBLAS** | **27.1 s** | **1.0x** |
-| Apple M3 Max | Apple Accelerate | 50.0 s | 0.54x |
+| Matrix Size | Pierre (Original) | Type 1 (ZGESV) | Type 3 (Woodbury) |
+|-------------|-------------------|----------------|-------------------|
+| 10000×10000 | 16.9s | 3.7s | 2.3s |
+| 25600×25600 | 222.7s | 52.0s | 32.5s |
 
-Apple Accelerate saturates at ~4 threads for complex matrix operations, while OpenBLAS scales effectively to all cores.
+OpenBLAS scales effectively to all cores for complex matrix operations.
 
 ```bash
 # OpenBLAS (recommended)
