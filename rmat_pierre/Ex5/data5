@@ -1,0 +1,10 @@
+10 8.00    !nr,rmax
+2 0.1 9.9  !ne,e0,estep
+0 0 0
+15 8.00    !nr,rmax
+2 0.1 9.9  !ne,e0,estep
+0 0 0
+15 -12.00  !nr,rmax
+2 0.1 9.9  !ne,e0,estep
+0 0 0
+0 0

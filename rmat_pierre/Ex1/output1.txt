@@ -1,0 +1,48 @@
+
+total angular momentum= 20
+number of basis functions per interval= 60
+number of intervals=  1
+channel radius=  14.0000
+Number of energies:  5
+Initial energy:   10.0000
+Energy step:   10.0000
+E (MeV)=  10.000   Collision matrix=  1.0000E+00  5.9801E-19
+E (MeV)=  20.000   Collision matrix=  1.0000E+00  7.4950E-07
+E (MeV)=  30.000   Collision matrix=  9.9893E-01  9.0496E-03
+E (MeV)=  40.000   Collision matrix=  6.5081E-01  2.9560E-01
+E (MeV)=  50.000   Collision matrix=  6.4367E-02  4.1130E-02
+Number of energies:  0
+Initial energy:    0.0000
+Energy step:    0.0000
+
+total angular momentum= 20
+number of basis functions per interval= 15
+number of intervals=  5
+channel radius=  14.0000
+Number of energies:  5
+Initial energy:   10.0000
+Energy step:   10.0000
+E (MeV)=  10.000   Collision matrix=  1.0000E+00  5.9631E-19
+E (MeV)=  20.000   Collision matrix=  1.0000E+00  7.4950E-07
+E (MeV)=  30.000   Collision matrix=  9.9893E-01  9.0496E-03
+E (MeV)=  40.000   Collision matrix=  6.5081E-01  2.9560E-01
+E (MeV)=  50.000   Collision matrix=  6.4367E-02  4.1130E-02
+Number of energies:  0
+Initial energy:    0.0000
+Energy step:    0.0000
+
+total angular momentum= 20
+number of basis functions per interval= 15
+number of intervals=  5
+channel radius=  16.0000
+Number of energies:  5
+Initial energy:   10.0000
+Energy step:   10.0000
+E (MeV)=  10.000   Collision matrix=  1.0000E+00  2.8398E-17
+E (MeV)=  20.000   Collision matrix=  1.0000E+00  4.4229E-06
+E (MeV)=  30.000   Collision matrix=  9.9879E-01  1.0301E-02
+E (MeV)=  40.000   Collision matrix=  6.5059E-01  2.9599E-01
+E (MeV)=  50.000   Collision matrix=  6.4381E-02  4.1206E-02
+Number of energies:  0
+Initial energy:    0.0000
+Energy step:    0.0000

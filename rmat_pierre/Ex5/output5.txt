@@ -1,0 +1,39 @@
+
+total angular momentum=  0
+number of basis functions per interval= 10
+number of intervals=  1
+channel radius=   8.0000
+Number of energies:  2
+Initial energy:    0.1000
+Energy step:    9.9000
+E (MeV)=   0.100 phase shift (deg.)= -1.5077E+01  1.0000E+00
+E (MeV)=  10.000 phase shift (deg.)=  8.5637E+01  1.0000E+00
+Number of energies:  0
+Initial energy:    0.0000
+Energy step:    0.0000
+
+total angular momentum=  0
+number of basis functions per interval= 15
+number of intervals=  1
+channel radius=   8.0000
+Number of energies:  2
+Initial energy:    0.1000
+Energy step:    9.9000
+E (MeV)=   0.100 phase shift (deg.)= -1.5077E+01  1.0000E+00
+E (MeV)=  10.000 phase shift (deg.)=  8.5637E+01  1.0000E+00
+Number of energies:  0
+Initial energy:    0.0000
+Energy step:    0.0000
+
+total angular momentum=  0
+number of basis functions per interval= 15
+number of intervals=  1
+channel radius=  12.0000
+Number of energies:  2
+Initial energy:    0.1000
+Energy step:    9.9000
+E (MeV)=   0.100 phase shift (deg.)= -1.5079E+01  1.0000E+00
+E (MeV)=  10.000 phase shift (deg.)=  8.5635E+01  1.0000E+00
+Number of energies:  0
+Initial energy:    0.0000
+Energy step:    0.0000

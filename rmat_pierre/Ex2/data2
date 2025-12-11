@@ -1,0 +1,10 @@
+1 60 1 7.0  !j,nr,ns,rmax
+4 12.0 12.0 !ne,e0,estep
+0 0 0
+1 30 2 7.0  !j,nr,ns,rmax
+4 12.0 12.0 !ne,e0,estep
+0 0 0
+1 25 3 -8.0  !j,nr,ns,rmax
+4 12.0 12.0 !ne,e0,estep
+0 0 0
+-1 0 0 0

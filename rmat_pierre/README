@@ -1,0 +1,1820 @@
+NOTE: This file is a direct copy of pages 9 to 12 of the manuscript published in the journal.
+
+-------------------------------------------------------------------------------------
+
+3. Description of the package
+The package consists in two parts: three subroutines which must be called by the user, and additional
+general-purpose subroutines. The list of these subroutines is given in Sect. 4.
+As mentioned previously, the inversion of matrix C represents the main part of the computer time.
+Consequently, the inversion subroutines cminv sym (symmetric matrices) and cminv nsym (non-symmetric
+matrices) contains two options. The first option is to use the subroutine cmatinv included in the package.
+The second option is to use subroutines from the LAPACK library [46]: zsytrf and zsytrf (symmetric
+matrices), or zgetrf and zgetri (non-symmetric matrices). This second option should be considered for
+many-channel calculations, in particular when a multi-CPU environment is available. The user can choose
+the option by commenting out the unnecessary lines in the subroutines cminv sym and cminv nsym.
+Units are MeV and fm for energies and lengths, respectively. All energies are given in the center-of-mass
+(c.m.) frame.
+The three main subroutines are:
+1. rmat ini: returns the abscissas of the mesh points.
+2. rmatrix: the main subroutine. Returns the collision3. Description of the package
+The package consists in two parts: three subroutines which must be called by the user, and additional
+general-purpose subroutines. The list of these subroutines is given in Sect. 4.
+As mentioned previously, the inversion of matrix C represents the main part of the computer time.
+Consequently, the inversion subroutines cminv sym (symmetric matrices) and cminv nsym (non-symmetric
+matrices) contains two options. The first option is to use the subroutine cmatinv included in the package.
+The second option is to use subroutines from the LAPACK library [46]: zsytrf and zsytrf (symmetric
+matrices), or zgetrf and zgetri (non-symmetric matrices). This second option should be considered for
+many-channel calculations, in particular when a multi-CPU environment is available. The user can choose
+the option by commenting out the unnecessary lines in the subroutines cminv sym and cminv nsym.
+Units are MeV and fm for energies and lengths, respectively. All energies are given in the center-of-mass
+(c.m.) frame.
+The three main subroutines are:
+1. rmat ini: returns the abscissas of the mesh points.
+2. rmatrix: the main subroutine. Returns the collision matrix, and (optionally) the wave function. It
+must be called for given energy and spin/parity.
+3. wf print: returns the wave function on a uniform mesh (specified by the user).
+The subroutine calling sequences are:
+SUBROUTINE RMAT_INI(NR,NS,RMAX,ZRMA)
+IMPLICIT REAL*8(A-H,O-Z)
+DIMENSION ZRMA(NS*NR)
+Input variables:
+• NR (integer*4): number of basis functions per interval N .
+• NS (integer*4): number of intervals Ns (Ns = 1 if propagation is not used).
+• RMAX (real*8): R-matrix channel radius a.
+Output variables:
+• ZRMA(NR*NS) (array, real*8): abscissas of the Lagrange mesh, where the potentials must be calculated
+(to be used as input in the subroutine rmatrix).
+9
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+SUBROUTINE RMATRIX(NCH,LVAL,QK,ETA,RMAX,NR,NS,CPOT,CU,NCP1,NDIM,NOPEN,TWF,CF,
+NWF1,NWF2,NC,NVC,NCP2,CPNL)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CPOT(NCP1,NDIM,NDIM),CU(NDIM,NDIM),
+CF(NWF1,NWF2,NC),NVC(NC),CPNL(NCP2,NDIM,NDIM)
+LOGICAL TWF
+Input variables:
+• NCH (integer*4): number of channels (total number, including the various angular momenta Li ).
+• LVAL(NCH) (array, integer*4): angular momenta Li of the channels.
+• QK(NCH) (array, real*8): wave numbers ki of the channels.
+For a closed channel I, QK(I) should be given as a negative number.
+• ETA(NCH) (array, real*8): Sommerfeld parameters ηi of the channels.
+• RMAX (real*8): R-matrix channel radius a (as entered in rmax ini).
+• NR (integer*4): number of basis functions per [aα−1 , aα ] interval, N (as entered in rmax ini).
+• NS (integer*4): number of intervals Ns (as entered in rmax ini).
+• CPOT(NCP1,NDIM,NDIM) (array, complex*16): local potentials Vij (r) divided by 2 /2μ.
+CPOT(I,J,K) refers to the mesh point I and to channels J and K (must be symmetric).
+• NCP1 (integer*4): first dimension of CPOT as declared in the program where RMATRIX is called (NCP1 ≥
+NS*NR.)
+• NDIM (integer*4): second and third dimensions of CPOT and CU as declared in the program where
+RMATRIX is called (NDIM ≥ NCH.)
+• TWF (logical): the wave function is computed if TWF=.TRUE.
+• NVC(NC) (array, integer*4): defines the set of entrance channels (not used if TWF=.FALSE.).
+• NWF1, NWF2 (integer*4): first and second dimensions of CF as declared in the program where RMATRIX
+is called (NWF1 ≥ NS*NR, NWF2 ≥ NCH.)
+• NC (integer*4): number of entrance channels (not used if TWF=.FALSE.).
+• NCP2 (integer*4): if a non-local potential is present: first dimension of CPNL; if not: NCP2=0. For this
+option, NCP2 ≥ NR**2 and NS=1.)
+• CPNL(NCP2,NDIM,NDIM)(array, complex*16): non-local potentials Wij (r, r ) divided by
+used if NCP2=0.
+CPNL(I1*(NR-1)+I2,J,K) refers to the mesh points I1 and I2, and to channels J and K.
+2
+/2μ. Not
+Output variables:
+• CU(NDIM,NDIM) (array, complex*16): collision matrix and (optionally) amplitudes of the closed chan-
+nels.
+CU(1:NOPEN,1:NOPEN) contains the collision matrix elements associated with the open channels.
+• NOPEN (integer*4): number of open channels.
+10
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+If TWF=.TRUE., the program provides an additional output:
+• CF(NWF1,NWF2,NC) (array, complex*16): contains the wave function for NC entrance channels. Indices
+of the entrance channels are listed in the array NVC.
+CF(I,J,K) contains the wave function uω (r) at the mesh points, for the output channel J and for
+i,int
+the entrance channel K. Index I therefore runs from I=1 to NS*NR. The array CF can be, either used
+as in Eq. (29), or interpolated to get the wave function at specific r values.
+• CU(NOPEN+1:NCH,1:NOPEN) contains the amplitudes (30) of closed channels in the external region
+ω
+(complex). Coefficients fin can be determined from Eq. (28).
+Let us briefly comment on variables NC and NVC(1:NC). A “physical” channel is defined by the quantum
+numbers associated with the colliding nuclei (energy, spin, parity, etc.). This means that, if the spins are
+different from zero, several Lω values are associated with that entrance channel, and that the total wave
+function involves several Lω values. For example, let us consider the p+n system, with J = 1+ . Although
+the problem involves a single physical channel, Lω = 0 and Lω = 2 are necessary to define the total wave
+function.
+SUBROUTINE WF_PRINT(NCH,LVAL,QK,ETA,RMAX,NR,NS,CU,NDIM,NOPEN,CF,
+NWF1,NWF2,ZRMA,IV,NOM,NPOIN,H,CWFTAB)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CU(NDIM,NDIM),CF(NWF1,NWF2,NOM),
+ZRMA(NS*NR),CWFTAB(NPOIN)
+Input variables specific to this subroutine:
+• IV (integer*4): exit channel.
+• NOM (integer*4): entrance channel.
+• NPOIN (integer*4): number of points where the wave functions is computed.
+• H (real*8): mesh size.
+The output is:
+• CWFTAB(NPOIN) (complex*16): wave function computed at the mesh points (from the interpolation of
+vector CF)
+4. List of additional subroutines
+The additional subroutines are:
+whit: computes the Whittaker function (see Ref. [47]).
+legzo: returns the abscissas and weights of the Gauss-Legendre integration [48].
+coulfg: computes the Coulomb functions [49].
+cminv sym: computes the inverse of a symmetric complex matrix; calls either cmatinv (included in the
+package) or zgetrf and zgetri (available in the LAPACK library). By default, cmatinv is used. The
+user can modify this option by commenting out a few lines in cminv sym.
+cminv nsym: computes the inverse of a non-symmetric complex matrix; calls either cmatinv (included in
+the package) or zsytrf and zsytri (available in the LAPACK library). The choice is done as before.
+cmatinv: computes the inverse of a general complex matrix.
+spline, splint: used for the interpolation of the wave function [50].
+11
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+5. Examples
+5.1. General presentation
+We provide examples to run the package in various conditions. Each example (here example 1) includes
+• the main program (calling subroutine RMATRIX) example1.f.
+• the R-matrix package rmatrix.f.
+• the input file data1.
+• the output file output1.txt and the wave function file wf1.txt are also provided as a test.
+Installation (we assume the INTEL Fortran compiler ifort):
+1. Compile rmatrix.f
+>ifort -c rmatrix.f
+2. Compile the example and link to rmatrix.o
+>ifort example1.f -o example1.out rmatrix.o
+Notice that this line may contain an additional link to the LAPACK library (see Ref. [46] for the
+source files and the installation of the library).
+3. Run the example
+>./example1.out < data1
+4. The output can be compared with the content of the file output1.txt. Of course, the main program
+and the input file can be adapted by the user.
+In each case, the main program (here example1.f) contains the potential, and reads some input:
+1. L (or J), NR, NS, RMAX: as defined before (exit if L<0)
+2. NE, E0, ESTEP
+NE=number of energies (the line is repeated until NE=0, and goes back to line 1)
+E0=first energy
+ESTEP=energy step.
+If RMAX<0: TWF=.TRUE., and the program prints the wave function in a file called wave function.txt (the
+absolute value of RMAX is used in the R-matrix calculation).
+5.2. Nucleus-nucleus potentials
+For the nuclear interaction, we usually use a Wood-Saxon p
+3. Description of the package
+The package consists in two parts: three subroutines which must be called by the user, and additional
+general-purpose subroutines. The list of these subroutines is given in Sect. 4.
+As mentioned previously, the inversion of matrix C represents the main part of the computer time.
+Consequently, the inversion subroutines cminv sym (symmetric matrices) and cminv nsym (non-symmetric
+matrices) contains two options. The first option is to use the subroutine cmatinv included in the package.
+The second option is to use subroutines from the LAPACK library [46]: zsytrf and zsytrf (symmetric
+matrices), or zgetrf and zgetri (non-symmetric matrices). This second option should be considered for
+many-channel calculations, in particular when a multi-CPU environment is available. The user can choose
+the option by commenting out the unnecessary lines in the subroutines cminv sym and cminv nsym.
+Units are MeV and fm for energies and lengths, respectively. All energies are given in the center-of-mass
+(c.m.) frame.
+The three main subroutines are:
+1. rmat ini: returns the abscissas of the mesh points.
+2. rmatrix: the main subroutine. Returns the collision matrix, and (optionally) the wave function. It
+must be called for given energy and spin/parity.
+3. wf print: returns the wave function on a uniform mesh (specified by the user).
+The subroutine calling sequences are:
+SUBROUTINE RMAT_INI(NR,NS,RMAX,ZRMA)
+IMPLICIT REAL*8(A-H,O-Z)
+DIMENSION ZRMA(NS*NR)
+Input variables:
+• NR (integer*4): number of basis functions per interval N .
+• NS (integer*4): number of intervals Ns (Ns = 1 if propagation is not used).
+• RMAX (real*8): R-matrix channel radius a.
+Output variables:
+• ZRMA(NR*NS) (array, real*8): abscissas of the Lagrange mesh, where the potentials must be calculated
+(to be used as input in the subroutine rmatrix).
+9
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+SUBROUTINE RMATRIX(NCH,LVAL,QK,ETA,RMAX,NR,NS,CPOT,CU,NCP1,NDIM,NOPEN,TWF,CF,
+NWF1,NWF2,NC,NVC,NCP2,CPNL)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CPOT(NCP1,NDIM,NDIM),CU(NDIM,NDIM),
+CF(NWF1,NWF2,NC),NVC(NC),CPNL(NCP2,NDIM,NDIM)
+LOGICAL TWF
+Input variables:
+• NCH (integer*4): number of channels (total number, including the various angular momenta Li ).
+• LVAL(NCH) (array, integer*4): angular momenta Li of the channels.
+• QK(NCH) (array, real*8): wave numbers ki of the channels.
+For a closed channel I, QK(I) should be given as a negative number.
+• ETA(NCH) (array, real*8): Sommerfeld parameters ηi of the channels.
+• RMAX (real*8): R-matrix channel radius a (as entered in rmax ini).
+• NR (integer*4): number of basis functions per [aα−1 , aα ] interval, N (as entered in rmax ini).
+• NS (integer*4): number of intervals Ns (as entered in rmax ini).
+• CPOT(NCP1,NDIM,NDIM) (array, complex*16): local potentials Vij (r) divided by 2 /2μ.
+CPOT(I,J,K) refers to the mesh point I and to channels J and K (must be symmetric).
+• NCP1 (integer*4): first dimension of CPOT as declared in the program where RMATRIX is called (NCP1 ≥
+NS*NR.)
+• NDIM (integer*4): second and third dimensions of CPOT and CU as declared in the program where
+RMATRIX is called (NDIM ≥ NCH.)
+• TWF (logical): the wave function is computed if TWF=.TRUE.
+• NVC(NC) (array, integer*4): defines the set of entrance channels (not used if TWF=.FALSE.).
+• NWF1, NWF2 (integer*4): first and second dimensions of CF as declared in the program where RMATRIX
+is called (NWF1 ≥ NS*NR, NWF2 ≥ NCH.)
+• NC (integer*4): number of entrance channels (not used if TWF=.FALSE.).
+• NCP2 (integer*4): if a non-local potential is present: first dimension of CPNL; if not: NCP2=0. For this
+option, NCP2 ≥ NR**2 and NS=1.)
+• CPNL(NCP2,NDIM,NDIM)(array, complex*16): non-local potentials Wij (r, r ) divided by
+used if NCP2=0.
+CPNL(I1*(NR-1)+I2,J,K) refers to the mesh points I1 and I2, and to channels J and K.
+2
+/2μ. Not
+Output variables:
+• CU(NDIM,NDIM) (array, complex*16): collision matrix and (optionally) amplitudes of the closed chan-
+nels.
+CU(1:NOPEN,1:NOPEN) contains the collision matrix elements associated with the open channels.
+• NOPEN (integer*4): number of open channels.
+10
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+If TWF=.TRUE., the program provides an additional output:
+• CF(NWF1,NWF2,NC) (array, complex*16): contains the wave function for NC entrance channels. Indices
+of the entrance channels are listed in the array NVC.
+CF(I,J,K) contains the wave function uω (r) at the mesh points, for the output channel J and for
+i,int
+the entrance channel K. Index I therefore runs from I=1 to NS*NR. The array CF can be, either used
+as in Eq. (29), or interpolated to get the wave function at specific r values.
+• CU(NOPEN+1:NCH,1:NOPEN) contains the amplitudes (30) of closed channels in the external region
+ω
+(complex). Coefficients fin can be determined from Eq. (28).
+Let us briefly comment on variables NC and NVC(1:NC). A “physical” channel is defined by the quantum
+numbers associated with the colliding nuclei (energy, spin, parity, etc.). This means that, if the spins are
+different from zero, several Lω values are associated with that entrance channel, and that the total wave
+function involves several Lω values. For example, let us consider the p+n system, with J = 1+ . Although
+the problem involves a single physical channel, Lω = 0 and Lω = 2 are necessary to define the total wave
+function.
+SUBROUTINE WF_PRINT(NCH,LVAL,QK,ETA,RMAX,NR,NS,CU,NDIM,NOPEN,CF,
+NWF1,NWF2,ZRMA,IV,NOM,NPOIN,H,CWFTAB)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CU(NDIM,NDIM),CF(NWF1,NWF2,NOM),
+ZRMA(NS*NR),CWFTAB(NPOIN)
+Input variables specific to this subroutine:
+• IV (integer*4): exit channel.
+• NOM (integer*4): entrance channel.
+• NPOIN (integer*4): number of points where the wave functions is computed.
+• H (real*8): mesh size.
+The output is:
+• CWFTAB(NPOIN) (complex*16): wave function computed at the mesh points (from the interpolation of
+vector CF)
+4. List of additional subroutines
+The additional subroutines are:
+whit: computes the Whittaker function (see Ref. [47]).
+legzo: returns the abscissas and weights of the Gauss-Legendre integration [48].
+coulfg: computes the Coulomb functions [49].
+cminv sym: computes the inverse of a symmetric complex matrix; calls either cmatinv (included in the
+package) or zgetrf and zgetri (available in the LAPACK library). By default, cmatinv is used. The
+user can modify this option by commenting out a few lines in cminv sym.
+cminv nsym: computes the inverse of a non-symmetric complex matrix; calls either cmatinv (included in
+the package) or zsytrf and zsytri (available in the LAPACK library). The choice is done as before.
+cmatinv: computes the inverse of a general complex matrix.
+spline, splint: used for the interpolation of the wave function [50].
+11
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+5. Examples
+5.1. General presentation
+We provide examples to run the package in various conditions. Each example (here example 1) includes
+• the main program (calling subroutine RMATRIX) example1.f.
+• the R-matrix package rmatrix.f.
+• the input file data1.
+• the output file output1.txt and the wave function file wf1.txt are also provided as a test.
+Installation (we assume the INTEL Fortran compiler ifort):
+1. Compile rmatrix.f
+>ifort -c rmatrix.f
+2. Compile the example and link to rmatrix.o
+>ifort example1.f -o example1.out rmatrix.o
+Notice that this line may contain an additional link to the LAPACK library (see Ref. [46] for the
+source files and the installation of the library).
+3. Run the example
+>./example1.out < data1
+4. The output can be compared with the content of the file output1.txt. Of course, the main program
+and the input file can be adapted by the user.
+In each case, the main program (here example1.f) contains the potential, and reads some input:
+1. L (or J), NR, NS, RMAX: as defined before (exit if L<0)
+2. NE, E0, ESTEP
+NE=number of energies (the line is repeated until NE=0, and goes back to line 1)
+E0=first energy
+ESTEP=energy step.
+If RMAX<0: TWF=.TRUE., and the program prints the wave function in a file called wave function.txt (the
+absolute value of RMAX is used in the R-matrix calculation).
+5.2. Nucleus-nucleus potentials
+For the nuclear interaction, we usually use a Wood-Saxon p
+3. Description of the package
+The package consists in two parts: three subroutines which must be called by the user, and additional
+general-purpose subroutines. The list of these subroutines is given in Sect. 4.
+As mentioned previously, the inversion of matrix C represents the main part of the computer time.
+Consequently, the inversion subroutines cminv sym (symmetric matrices) and cminv nsym (non-symmetric
+matrices) contains two options. The first option is to use the subroutine cmatinv included in the package.
+The second option is to use subroutines from the LAPACK library [46]: zsytrf and zsytrf (symmetric
+matrices), or zgetrf and zgetri (non-symmetric matrices). This second option should be considered for
+many-channel calculations, in particular when a multi-CPU environment is available. The user can choose
+the option by commenting out the unnecessary lines in the subroutines cminv sym and cminv nsym.
+Units are MeV and fm for energies and lengths, respectively. All energies are given in the center-of-mass
+(c.m.) frame.
+The three main subroutines are:
+1. rmat ini: returns the abscissas of the mesh points.
+2. rmatrix: the main subroutine. Returns the collision matrix, and (optionally) the wave function. It
+must be called for given energy and spin/parity.
+3. wf print: returns the wave function on a uniform mesh (specified by the user).
+The subroutine calling sequences are:
+SUBROUTINE RMAT_INI(NR,NS,RMAX,ZRMA)
+IMPLICIT REAL*8(A-H,O-Z)
+DIMENSION ZRMA(NS*NR)
+Input variables:
+• NR (integer*4): number of basis functions per interval N .
+• NS (integer*4): number of intervals Ns (Ns = 1 if propagation is not used).
+• RMAX (real*8): R-matrix channel radius a.
+Output variables:
+• ZRMA(NR*NS) (array, real*8): abscissas of the Lagrange mesh, where the potentials must be calculated
+(to be used as input in the subroutine rmatrix).
+9
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+SUBROUTINE RMATRIX(NCH,LVAL,QK,ETA,RMAX,NR,NS,CPOT,CU,NCP1,NDIM,NOPEN,TWF,CF,
+NWF1,NWF2,NC,NVC,NCP2,CPNL)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CPOT(NCP1,NDIM,NDIM),CU(NDIM,NDIM),
+CF(NWF1,NWF2,NC),NVC(NC),CPNL(NCP2,NDIM,NDIM)
+LOGICAL TWF
+Input variables:
+• NCH (integer*4): number of channels (total number, including the various angular momenta Li ).
+• LVAL(NCH) (array, integer*4): angular momenta Li of the channels.
+• QK(NCH) (array, real*8): wave numbers ki of the channels.
+For a closed channel I, QK(I) should be given as a negative number.
+• ETA(NCH) (array, real*8): Sommerfeld parameters ηi of the channels.
+• RMAX (real*8): R-matrix channel radius a (as entered in rmax ini).
+• NR (integer*4): number of basis functions per [aα−1 , aα ] interval, N (as entered in rmax ini).
+• NS (integer*4): number of intervals Ns (as entered in rmax ini).
+• CPOT(NCP1,NDIM,NDIM) (array, complex*16): local potentials Vij (r) divided by 2 /2μ.
+CPOT(I,J,K) refers to the mesh point I and to channels J and K (must be symmetric).
+• NCP1 (integer*4): first dimension of CPOT as declared in the program where RMATRIX is called (NCP1 ≥
+NS*NR.)
+• NDIM (integer*4): second and third dimensions of CPOT and CU as declared in the program where
+RMATRIX is called (NDIM ≥ NCH.)
+• TWF (logical): the wave function is computed if TWF=.TRUE.
+• NVC(NC) (array, integer*4): defines the set of entrance channels (not used if TWF=.FALSE.).
+• NWF1, NWF2 (integer*4): first and second dimensions of CF as declared in the program where RMATRIX
+is called (NWF1 ≥ NS*NR, NWF2 ≥ NCH.)
+• NC (integer*4): number of entrance channels (not used if TWF=.FALSE.).
+• NCP2 (integer*4): if a non-local potential is present: first dimension of CPNL; if not: NCP2=0. For this
+option, NCP2 ≥ NR**2 and NS=1.)
+• CPNL(NCP2,NDIM,NDIM)(array, complex*16): non-local potentials Wij (r, r ) divided by
+used if NCP2=0.
+CPNL(I1*(NR-1)+I2,J,K) refers to the mesh points I1 and I2, and to channels J and K.
+2
+/2μ. Not
+Output variables:
+• CU(NDIM,NDIM) (array, complex*16): collision matrix and (optionally) amplitudes of the closed chan-
+nels.
+CU(1:NOPEN,1:NOPEN) contains the collision matrix elements associated with the open channels.
+• NOPEN (integer*4): number of open channels.
+10
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+If TWF=.TRUE., the program provides an additional output:
+• CF(NWF1,NWF2,NC) (array, complex*16): contains the wave function for NC entrance channels. Indices
+of the entrance channels are listed in the array NVC.
+CF(I,J,K) contains the wave function uω (r) at the mesh points, for the output channel J and for
+i,int
+the entrance channel K. Index I therefore runs from I=1 to NS*NR. The array CF can be, either used
+as in Eq. (29), or interpolated to get the wave function at specific r values.
+• CU(NOPEN+1:NCH,1:NOPEN) contains the amplitudes (30) of closed channels in the external region
+ω
+(complex). Coefficients fin can be determined from Eq. (28).
+Let us briefly comment on variables NC and NVC(1:NC). A “physical” channel is defined by the quantum
+numbers associated with the colliding nuclei (energy, spin, parity, etc.). This means that, if the spins are
+different from zero, several Lω values are associated with that entrance channel, and that the total wave
+function involves several Lω values. For example, let us consider the p+n system, with J = 1+ . Although
+the problem involves a single physical channel, Lω = 0 and Lω = 2 are necessary to define the total wave
+function.
+SUBROUTINE WF_PRINT(NCH,LVAL,QK,ETA,RMAX,NR,NS,CU,NDIM,NOPEN,CF,
+NWF1,NWF2,ZRMA,IV,NOM,NPOIN,H,CWFTAB)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CU(NDIM,NDIM),CF(NWF1,NWF2,NOM),
+ZRMA(NS*NR),CWFTAB(NPOIN)
+Input variables specific to this subroutine:
+• IV (integer*4): exit channel.
+• NOM (integer*4): entrance channel.
+• NPOIN (integer*4): number of points where the wave functions is computed.
+• H (real*8): mesh size.
+The output is:
+• CWFTAB(NPOIN) (complex*16): wave function computed at the mesh points (from the interpolation of
+vector CF)
+4. List of additional subroutines
+The additional subroutines are:
+whit: computes the Whittaker function (see Ref. [47]).
+legzo: returns the abscissas and weights of the Gauss-Legendre integration [48].
+coulfg: computes the Coulomb functions [49].
+cminv sym: computes the inverse of a symmetric complex matrix; calls either cmatinv (included in the
+package) or zgetrf and zgetri (available in the LAPACK library). By default, cmatinv is used. The
+user can modify this option by commenting out a few lines in cminv sym.
+cminv nsym: computes the inverse of a non-symmetric complex matrix; calls either cmatinv (included in
+the package) or zsytrf and zsytri (available in the LAPACK library). The choice is done as before.
+cmatinv: computes the inverse of a general complex matrix.
+spline, splint: used for the interpolation of the wave function [50].
+11
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+5. Examples
+5.1. General presentation
+We provide examples to run the package in various conditions. Each example (here example 1) includes
+• the main program (calling subroutine RMATRIX) example1.f.
+• the R-matrix package rmatrix.f.
+• the input file data1.
+• the output file output1.txt and the wave function file wf1.txt are also provided as a test.
+Installation (we assume the INTEL Fortran compiler ifort):
+1. Compile rmatrix.f
+>ifort -c rmatrix.f
+2. Compile the example and link to rmatrix.o
+>ifort example1.f -o example1.out rmatrix.o
+Notice that this line may contain an additional link to the LAPACK library (see Ref. [46] for the
+source files and the installation of the library).
+3. Run the example
+>./example1.out < data1
+4. The output can be compared with the content of the file output1.txt. Of course, the main program
+and the input file can be adapted by the user.
+In each case, the main program (here example1.f) contains the potential, and reads some input:
+1. L (or J), NR, NS, RMAX: as defined before (exit if L<0)
+2. NE, E0, ESTEP
+NE=number of energies (the line is repeated until NE=0, and goes back to line 1)
+E0=first energy
+ESTEP=energy step.
+If RMAX<0: TWF=.TRUE., and the program prints the wave function in a file called wave function.txt (the
+absolute value of RMAX is used in the R-matrix calculation).
+5.2. Nucleus-nucleus potentials
+For the nuclear interaction, we usually use a Wood-Saxon p
+ matrix, and (optionally) the wave function. It
+must be called for given energy and spin/parity.
+3. wf print: returns the wave function on a uniform mesh (specified by the user).
+The subroutine calling sequences are:
+SUBROUTINE RMAT_INI(NR,NS,RMAX,ZRMA)
+IMPLICIT REAL*8(A-H,O-Z)
+DIMENSION ZRMA(NS*NR)
+Input variables:
+• NR (integer*4): number of basis functions per interval N .
+• NS (integer*4): number of intervals Ns (Ns = 1 if propagation is not used).
+• RMAX (real*8): R-matrix channel radius a.
+Output variables:
+• ZRMA(NR*NS) (array, real*8): abscissas of the Lagrange mesh, where the potentials must be calculated
+(to be used as input in the subroutine rmatrix).
+
+SUBROUTINE RMATRIX(NCH,LVAL,QK,ETA,RMAX,NR,NS,CPOT,CU,NCP1,NDIM,NOPEN,TWF,CF,
+NWF1,NWF2,NC,NVC,NCP2,CPNL)3. Description of the package
+The package consists in two parts: three subroutines which must be called by the user, and additional
+general-purpose subroutines. The list of these subroutines is given in Sect. 4.
+As mentioned previously, the inversion of matrix C represents the main part of the computer time.
+Consequently, the inversion subroutines cminv sym (symmetric matrices) and cminv nsym (non-symmetric
+matrices) contains two options. The first option is to use the subroutine cmatinv included in the package.
+The second option is to use subroutines from the LAPACK library [46]: zsytrf and zsytrf (symmetric
+matrices), or zgetrf and zgetri (non-symmetric matrices). This second option should be considered for
+many-channel calculations, in particular when a multi-CPU environment is available. The user can choose
+the option by commenting out the unnecessary lines in the subroutines cminv sym and cminv nsym.
+Units are MeV and fm for energies and lengths, respectively. All energies are given in the center-of-mass
+(c.m.) frame.
+The three main subroutines are:
+1. rmat ini: returns the abscissas of the mesh points.
+2. rmatrix: the main subroutine. Returns the collision matrix, and (optionally) the wave function. It
+must be called for given energy and spin/parity.
+3. wf print: returns the wave function on a uniform mesh (specified by the user).
+The subroutine calling sequences are:
+SUBROUTINE RMAT_INI(NR,NS,RMAX,ZRMA)
+IMPLICIT REAL*8(A-H,O-Z)
+DIMENSION ZRMA(NS*NR)
+Input variables:
+• NR (integer*4): number of basis functions per interval N .
+• NS (integer*4): number of intervals Ns (Ns = 1 if propagation is not used).
+• RMAX (real*8): R-matrix channel radius a.
+Output variables:
+• ZRMA(NR*NS) (array, real*8): abscissas of the Lagrange mesh, where the potentials must be calculated
+(to be used as input in the subroutine rmatrix).
+9
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+SUBROUTINE RMATRIX(NCH,LVAL,QK,ETA,RMAX,NR,NS,CPOT,CU,NCP1,NDIM,NOPEN,TWF,CF,
+NWF1,NWF2,NC,NVC,NCP2,CPNL)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CPOT(NCP1,NDIM,NDIM),CU(NDIM,NDIM),
+CF(NWF1,NWF2,NC),NVC(NC),CPNL(NCP2,NDIM,NDIM)
+LOGICAL TWF
+Input variables:
+• NCH (integer*4): number of channels (total number, including the various angular momenta Li ).
+• LVAL(NCH) (array, integer*4): angular momenta Li of the channels.
+• QK(NCH) (array, real*8): wave numbers ki of the channels.
+For a closed channel I, QK(I) should be given as a negative number.
+• ETA(NCH) (array, real*8): Sommerfeld parameters ηi of the channels.
+• RMAX (real*8): R-matrix channel radius a (as entered in rmax ini).
+• NR (integer*4): number of basis functions per [aα−1 , aα ] interval, N (as entered in rmax ini).
+• NS (integer*4): number of intervals Ns (as entered in rmax ini).
+• CPOT(NCP1,NDIM,NDIM) (array, complex*16): local potentials Vij (r) divided by 2 /2μ.
+CPOT(I,J,K) refers to the mesh point I and to channels J and K (must be symmetric).
+• NCP1 (integer*4): first dimension of CPOT as declared in the program where RMATRIX is called (NCP1 ≥
+NS*NR.)
+• NDIM (integer*4): second and third dimensions of CPOT and CU as declared in the program where
+RMATRIX is called (NDIM ≥ NCH.)
+• TWF (logical): the wave function is computed if TWF=.TRUE.
+• NVC(NC) (array, integer*4): defines the set of entrance channels (not used if TWF=.FALSE.).
+• NWF1, NWF2 (integer*4): first and second dimensions of CF as declared in the program where RMATRIX
+is called (NWF1 ≥ NS*NR, NWF2 ≥ NCH.)
+• NC (integer*4): number of entrance channels (not used if TWF=.FALSE.).
+• NCP2 (integer*4): if a non-local potential is present: first dimension of CPNL; if not: NCP2=0. For this
+option, NCP2 ≥ NR**2 and NS=1.)
+• CPNL(NCP2,NDIM,NDIM)(array, complex*16): non-local potentials Wij (r, r ) divided by
+used if NCP2=0.
+CPNL(I1*(NR-1)+I2,J,K) refers to the mesh points I1 and I2, and to channels J and K.
+2
+/2μ. Not
+Output variables:
+• CU(NDIM,NDIM) (array, complex*16): collision matrix and (optionally) amplitudes of the closed chan-
+nels.
+CU(1:NOPEN,1:NOPEN) contains the collision matrix elements associated with the open channels.
+• NOPEN (integer*4): number of open channels.
+10
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+If TWF=.TRUE., the program provides an additional output:
+• CF(NWF1,NWF2,NC) (array, complex*16): contains the wave function for NC entrance channels. Indices
+of the entrance channels are listed in the array NVC.
+CF(I,J,K) contains the wave function uω (r) at the mesh points, for the output channel J and for
+i,int
+the entrance channel K. Index I therefore runs from I=1 to NS*NR. The array CF can be, either used
+as in Eq. (29), or interpolated to get the wave function at specific r values.
+• CU(NOPEN+1:NCH,1:NOPEN) contains the amplitudes (30) of closed channels in the external region
+ω
+(complex). Coefficients fin can be determined from Eq. (28).
+Let us briefly comment on variables NC and NVC(1:NC). A “physical” channel is defined by the quantum
+numbers associated with the colliding nuclei (energy, spin, parity, etc.). This means that, if the spins are
+different from zero, several Lω values are associated with that entrance channel, and that the total wave
+function involves several Lω values. For example, let us consider the p+n system, with J = 1+ . Although
+the problem involves a single physical channel, Lω = 0 and Lω = 2 are necessary to define the total wave
+function.
+SUBROUTINE WF_PRINT(NCH,LVAL,QK,ETA,RMAX,NR,NS,CU,NDIM,NOPEN,CF,
+NWF1,NWF2,ZRMA,IV,NOM,NPOIN,H,CWFTAB)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CU(NDIM,NDIM),CF(NWF1,NWF2,NOM),
+ZRMA(NS*NR),CWFTAB(NPOIN)
+Input variables specific to this subroutine:
+• IV (integer*4): exit channel.
+• NOM (integer*4): entrance channel.
+• NPOIN (integer*4): number of points where the wave functions is computed.
+• H (real*8): mesh size.
+The output is:
+• CWFTAB(NPOIN) (complex*16): wave function computed at the mesh points (from the interpolation of
+vector CF)
+4. List of additional subroutines
+The additional subroutines are:
+whit: computes the Whittaker function (see Ref. [47]).
+legzo: returns the abscissas and weights of the Gauss-Legendre integration [48].
+coulfg: computes the Coulomb functions [49].
+cminv sym: computes the inverse of a symmetric complex matrix; calls either cmatinv (included in the
+package) or zgetrf and zgetri (available in the LAPACK library). By default, cmatinv is used. The
+user can modify this option by commenting out a few lines in cminv sym.
+cminv nsym: computes the inverse of a non-symmetric complex matrix; calls either cmatinv (included in
+the package) or zsytrf and zsytri (available in the LAPACK library). The choice is done as before.
+cmatinv: computes the inverse of a general complex matrix.
+spline, splint: used for the interpolation of the wave function [50].
+11
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+5. Examples
+5.1. General presentation
+We provide examples to run the package in various conditions. Each example (here example 1) includes
+• the main program (calling subroutine RMATRIX) example1.f.
+• the R-matrix package rmatrix.f.
+• the input file data1.
+• the output file output1.txt and the wave function file wf1.txt are also provided as a test.
+Installation (we assume the INTEL Fortran compiler ifort):
+1. Compile rmatrix.f
+>ifort -c rmatrix.f
+2. Compile the example and link to rmatrix.o
+>ifort example1.f -o example1.out rmatrix.o
+Notice that this line may contain an additional link to the LAPACK library (see Ref. [46] for the
+source files and the installation of the library).
+3. Run the example
+>./example1.out < data1
+4. The output can be compared with the content of the file output1.txt. Of course, the main program
+and the input file can be adapted by the user.
+In each case, the main program (here example1.f) contains the potential, and reads some input:
+1. L (or J), NR, NS, RMAX: as defined before (exit if L<0)
+2. NE, E0, ESTEP
+NE=number of energies (the line is repeated until NE=0, and goes back to line 1)
+E0=first energy
+ESTEP=energy step.
+If RMAX<0: TWF=.TRUE., and the program prints the wave function in a file called wave function.txt (the
+absolute value of RMAX is used in the R-matrix calculation).
+5.2. Nucleus-nucleus potentials
+For the nuclear interaction, we usually use a Wood-Saxon p
+
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CPOT(NCP1,NDIM,NDIM),CU(NDIM,NDIM),
+CF(NWF1,NWF2,NC),NVC(NC),CPNL(NCP2,NDIM,NDIM)
+LOGICAL TWF3. Description of the package
+The package consists in two parts: three subroutines which must be called by the user, and additional
+general-purpose subroutines. The list of these subroutines is given in Sect. 4.
+As mentioned previously, the inversion of matrix C represents the main part of the computer time.
+Consequently, the inversion subroutines cminv sym (symmetric matrices) and cminv nsym (non-symmetric
+matrices) contains two options. The first option is to use the subroutine cmatinv included in the package.
+The second option is to use subroutines from the LAPACK library [46]: zsytrf and zsytrf (symmetric
+matrices), or zgetrf and zgetri (non-symmetric matrices). This second option should be considered for
+many-channel calculations, in particular when a multi-CPU environment is available. The user can choose
+the option by commenting out the unnecessary lines in the subroutines cminv sym and cminv nsym.
+Units are MeV and fm for energies and lengths, respectively. All energies are given in the center-of-mass
+(c.m.) frame.
+The three main subroutines are:
+1. rmat ini: returns the abscissas of the mesh points.
+2. rmatrix: the main subroutine. Returns the collision matrix, and (optionally) the wave function. It
+must be called for given energy and spin/parity.
+3. wf print: returns the wave function on a uniform mesh (specified by the user).
+The subroutine calling sequences are:
+SUBROUTINE RMAT_INI(NR,NS,RMAX,ZRMA)
+IMPLICIT REAL*8(A-H,O-Z)
+DIMENSION ZRMA(NS*NR)
+Input variables:
+• NR (integer*4): number of basis functions per interval N .
+• NS (integer*4): number of intervals Ns (Ns = 1 if propagation is not used).
+• RMAX (real*8): R-matrix channel radius a.
+Output variables:
+• ZRMA(NR*NS) (array, real*8): abscissas of the Lagrange mesh, where the potentials must be calculated
+(to be used as input in the subroutine rmatrix).
+9
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+SUBROUTINE RMATRIX(NCH,LVAL,QK,ETA,RMAX,NR,NS,CPOT,CU,NCP1,NDIM,NOPEN,TWF,CF,
+NWF1,NWF2,NC,NVC,NCP2,CPNL)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CPOT(NCP1,NDIM,NDIM),CU(NDIM,NDIM),
+CF(NWF1,NWF2,NC),NVC(NC),CPNL(NCP2,NDIM,NDIM)
+LOGICAL TWF
+Input variables:
+• NCH (integer*4): number of channels (total number, including the various angular momenta Li ).
+• LVAL(NCH) (array, integer*4): angular momenta Li of the channels.
+• QK(NCH) (array, real*8): wave numbers ki of the channels.
+For a closed channel I, QK(I) should be given as a negative number.
+• ETA(NCH) (array, real*8): Sommerfeld parameters ηi of the channels.
+• RMAX (real*8): R-matrix channel radius a (as entered in rmax ini).
+• NR (integer*4): number of basis functions per [aα−1 , aα ] interval, N (as entered in rmax ini).
+• NS (integer*4): number of intervals Ns (as entered in rmax ini).
+• CPOT(NCP1,NDIM,NDIM) (array, complex*16): local potentials Vij (r) divided by 2 /2μ.
+CPOT(I,J,K) refers to the mesh point I and to channels J and K (must be symmetric).
+• NCP1 (integer*4): first dimension of CPOT as declared in the program where RMATRIX is called (NCP1 ≥
+NS*NR.)
+• NDIM (integer*4): second and third dimensions of CPOT and CU as declared in the program where
+RMATRIX is called (NDIM ≥ NCH.)
+• TWF (logical): the wave function is computed if TWF=.TRUE.
+• NVC(NC) (array, integer*4): defines the set of entrance channels (not used if TWF=.FALSE.).
+• NWF1, NWF2 (integer*4): first and second dimensions of CF as declared in the program where RMATRIX
+is called (NWF1 ≥ NS*NR, NWF2 ≥ NCH.)
+• NC (integer*4): number of entrance channels (not used if TWF=.FALSE.).
+• NCP2 (integer*4): if a non-local potential is present: first dimension of CPNL; if not: NCP2=0. For this
+option, NCP2 ≥ NR**2 and NS=1.)
+• CPNL(NCP2,NDIM,NDIM)(array, complex*16): non-local potentials Wij (r, r ) divided by
+used if NCP2=0.
+CPNL(I1*(NR-1)+I2,J,K) refers to the mesh points I1 and I2, and to channels J and K.
+2
+/2μ. Not
+Output variables:
+• CU(NDIM,NDIM) (array, complex*16): collision matrix and (optionally) amplitudes of the closed chan-
+nels.
+CU(1:NOPEN,1:NOPEN) contains the collision matrix elements associated with the open channels.
+• NOPEN (integer*4): number of open channels.
+10
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+If TWF=.TRUE., the program provides an additional output:
+• CF(NWF1,NWF2,NC) (array, complex*16): contains the wave function for NC entrance channels. Indices
+of the entrance channels are listed in the array NVC.
+CF(I,J,K) contains the wave function uω (r) at the mesh points, for the output channel J and for
+i,int
+the entrance channel K. Index I therefore runs from I=1 to NS*NR. The array CF can be, either used
+as in Eq. (29), or interpolated to get the wave function at specific r values.
+• CU(NOPEN+1:NCH,1:NOPEN) contains the amplitudes (30) of closed channels in the external region
+ω
+(complex). Coefficients fin can be determined from Eq. (28).
+Let us briefly comment on variables NC and NVC(1:NC). A “physical” channel is defined by the quantum
+numbers associated with the colliding nuclei (energy, spin, parity, etc.). This means that, if the spins are
+different from zero, several Lω values are associated with that entrance channel, and that the total wave
+function involves several Lω values. For example, let us consider the p+n system, with J = 1+ . Although
+the problem involves a single physical channel, Lω = 0 and Lω = 2 are necessary to define the total wave
+function.
+SUBROUTINE WF_PRINT(NCH,LVAL,QK,ETA,RMAX,NR,NS,CU,NDIM,NOPEN,CF,
+NWF1,NWF2,ZRMA,IV,NOM,NPOIN,H,CWFTAB)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CU(NDIM,NDIM),CF(NWF1,NWF2,NOM),
+ZRMA(NS*NR),CWFTAB(NPOIN)
+Input variables specific to this subroutine:
+• IV (integer*4): exit channel.
+• NOM (integer*4): entrance channel.
+• NPOIN (integer*4): number of points where the wave functions is computed.
+• H (real*8): mesh size.
+The output is:
+• CWFTAB(NPOIN) (complex*16): wave function computed at the mesh points (from the interpolation of
+vector CF)
+4. List of additional subroutines
+The additional subroutines are:
+whit: computes the Whittaker function (see Ref. [47]).
+legzo: returns the abscissas and weights of the Gauss-Legendre integration [48].
+coulfg: computes the Coulomb functions [49].
+cminv sym: computes the inverse of a symmetric complex matrix; calls either cmatinv (included in the
+package) or zgetrf and zgetri (available in the LAPACK library). By default, cmatinv is used. The
+user can modify this option by commenting out a few lines in cminv sym.
+cminv nsym: computes the inverse of a non-symmetric complex matrix; calls either cmatinv (included in
+the package) or zsytrf and zsytri (available in the LAPACK library). The choice is done as before.
+cmatinv: computes the inverse of a general complex matrix.
+spline, splint: used for the interpolation of the wave function [50].
+11
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+65
+5. Examples
+5.1. General presentation
+We provide examples to run the package in various conditions. Each example (here example 1) includes
+• the main program (calling subroutine RMATRIX) example1.f.
+• the R-matrix package rmatrix.f.
+• the input file data1.
+• the output file output1.txt and the wave function file wf1.txt are also provided as a test.
+Installation (we assume the INTEL Fortran compiler ifort):
+1. Compile rmatrix.f
+>ifort -c rmatrix.f
+2. Compile the example and link to rmatrix.o
+>ifort example1.f -o example1.out rmatrix.o
+Notice that this line may contain an additional link to the LAPACK library (see Ref. [46] for the
+source files and the installation of the library).
+3. Run the example
+>./example1.out < data1
+4. The output can be compared with the content of the file output1.txt. Of course, the main program
+and the input file can be adapted by the user.
+In each case, the main program (here example1.f) contains the potential, and reads some input:
+1. L (or J), NR, NS, RMAX: as defined before (exit if L<0)
+2. NE, E0, ESTEP
+NE=number of energies (the line is repeated until NE=0, and goes back to line 1)
+E0=first energy
+ESTEP=energy step.
+If RMAX<0: TWF=.TRUE., and the program prints the wave function in a file called wave function.txt (the
+absolute value of RMAX is used in the R-matrix calculation).
+5.2. Nucleus-nucleus potentials
+For the nuclear interaction, we usually use a Wood-Saxon p
+
+Input variables:
+• NCH (integer*4): number of channels (total number, including the various angular momenta Li ).
+• LVAL(NCH) (array, integer*4): angular momenta Li of the channels.
+• QK(NCH) (array, real*8): wave numbers ki of the channels.
+For a closed channel I, QK(I) should be given as a negative number.
+• ETA(NCH) (array, real*8): Sommerfeld parameters ηi of the channels.
+• RMAX (real*8): R-matrix channel radius a (as entered in rmax ini).
+• NR (integer*4): number of basis functions per [aα−1 , aα ] interval, N (as entered in rmax ini).
+• NS (integer*4): number of intervals Ns (as entered in rmax ini).
+• CPOT(NCP1,NDIM,NDIM) (array, complex*16): local potentials Vij (r) divided by 2 /2μ.
+CPOT(I,J,K) refers to the mesh point I and to channels J and K (must be symmetric).
+• NCP1 (integer*4): first dimension of CPOT as declared in the program where RMATRIX is called (NCP1 ≥
+NS*NR.)
+• NDIM (integer*4): second and third dimensions of CPOT and CU as declared in the program where
+RMATRIX is called (NDIM ≥ NCH.)
+• TWF (logical): the wave function is computed if TWF=.TRUE.
+• NVC(NC) (array, integer*4): defines the set of entrance channels (not used if TWF=.FALSE.).
+• NWF1, NWF2 (integer*4): first and second dimensions of CF as declared in the program where RMATRIX
+is called (NWF1 ≥ NS*NR, NWF2 ≥ NCH.)
+• NC (integer*4): number of entrance channels (not used if TWF=.FALSE.).
+• NCP2 (integer*4): if a non-local potential is present: first dimension of CPNL; if not: NCP2=0. For this
+option, NCP2 ≥ NR**2 and NS=1.)
+• CPNL(NCP2,NDIM,NDIM)(array, complex*16): non-local potentials Wij (r, r ) divided by
+used if NCP2=0.
+CPNL(I1*(NR-1)+I2,J,K) refers to the mesh points I1 and I2, and to channels J and K.
+2
+/2μ. Not
+Output variables:
+• CU(NDIM,NDIM) (array, complex*16): collision matrix and (optionally) amplitudes of the closed chan-
+nels.
+CU(1:NOPEN,1:NOPEN) contains the collision matrix elements associated with the open channels.
+• NOPEN (integer*4): number of open channels.
+
+If TWF=.TRUE., the program provides an additional output:
+• CF(NWF1,NWF2,NC) (array, complex*16): contains the wave function for NC entrance channels. Indices
+of the entrance channels are listed in the array NVC.
+CF(I,J,K) contains the wave function uω (r) at the mesh points, for the output channel J and for
+i,int
+the entrance channel K. Index I therefore runs from I=1 to NS*NR. The array CF can be, either used
+as in Eq. (29), or interpolated to get the wave function at specific r values.
+• CU(NOPEN+1:NCH,1:NOPEN) contains the amplitudes (30) of closed channels in the external region
+ω
+(complex). Coefficients fin can be determined from Eq. (28).
+Let us briefly comment on variables NC and NVC(1:NC). A “physical” channel is defined by the quantum
+numbers associated with the colliding nuclei (energy, spin, parity, etc.). This means that, if the spins are
+different from zero, several Lω values are associated with that entrance channel, and that the total wave
+function involves several Lω values. For example, let us consider the p+n system, with J = 1+ . Although
+the problem involves a single physical channel, Lω = 0 and Lω = 2 are necessary to define the total wave
+function.
+SUBROUTINE WF_PRINT(NCH,LVAL,QK,ETA,RMAX,NR,NS,CU,NDIM,NOPEN,CF,
+NWF1,NWF2,ZRMA,IV,NOM,NPOIN,H,CWFTAB)
+IMPLICIT REAL*8(A,B,D-H,O-Z)
+IMPLICIT COMPLEX*16(C)
+DIMENSION LVAL(NCH),QK(NCH),ETA(NCH),CU(NDIM,NDIM),CF(NWF1,NWF2,NOM),
+ZRMA(NS*NR),CWFTAB(NPOIN)
+Input variables specific to this subroutine:
+• IV (integer*4): exit channel.
+• NOM (integer*4): entrance channel.
+• NPOIN (integer*4): number of points where the wave functions is computed.
+• H (real*8): mesh size.
+The output is:
+• CWFTAB(NPOIN) (complex*16): wave function computed at the mesh points (from the interpolation of
+vector CF)
+4. List of additional subroutines
+The additional subroutines are:
+whit: computes the Whittaker function (see Ref. [47]).
+legzo: returns the abscissas and weights of the Gauss-Legendre integration [48].
+coulfg: computes the Coulomb functions [49].
+cminv sym: computes the inverse of a symmetric complex matrix; calls either cmatinv (included in the
+package) or zgetrf and zgetri (available in the LAPACK library). By default, cmatinv is used. The
+user can modify this option by commenting out a few lines in cminv sym.
+cminv nsym: computes the inverse of a non-symmetric complex matrix; calls either cmatinv (included in
+the package) or zsytrf and zsytri (available in the LAPACK library). The choice is done as before.
+cmatinv: computes the inverse of a general complex matrix.
+spline, splint: used for the interpolation of the wave function [50].
+
+5. Examples
+5.1. General presentation
+We provide examples to run the package in various conditions. Each example (here example 1) includes
+• the main program (calling subroutine RMATRIX) example1.f.
+• the R-matrix package rmatrix.f.
+• the input file data1.
+• the output file output1.txt and the wave function file wf1.txt are also provided as a test.
+Installation (we assume the INTEL Fortran compiler ifort):
+1. Compile rmatrix.f
+>ifort -c rmatrix.f
+2. Compile the example and link to rmatrix.o
+>ifort example1.f -o example1.out rmatrix.o
+Notice that this line may contain an additional link to the LAPACK library (see Ref. [46] for the
+source files and the installation of the library).
+3. Run the example
+>./example1.out < data1
+4. The output can be compared with the content of the file output1.txt. Of course, the main program
+and the input file can be adapted by the user.
+In each case, the main program (here example1.f) contains the potential, and reads some input:
+1. L (or J), NR, NS, RMAX: as defined before (exit if L<0)
+2. NE, E0, ESTEP
+NE=number of energies (the line is repeated until NE=0, and goes back to line 1)
+E0=first energy
+ESTEP=energy step.
+If RMAX<0: TWF=.TRUE., and the program prints the wave function in a file called wave function.txt (the
+absolute value of RMAX is used in the R-matrix calculation).
+5.2. Nucleus-nucleus potentials
+For the nuclear interaction, we usually use a Wood-Saxon p
+
