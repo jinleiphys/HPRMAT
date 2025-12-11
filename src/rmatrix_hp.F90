@@ -168,6 +168,7 @@ end subroutine rmat_ini
 subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
                    ncp1, ndim, nopen, twf, cf, nwf1, nwf2, nc, nvc, ncp2, cpnl, isolver)
   use rmat_hp_mod
+  use rmat_solvers, only: solve_rmatrix_woodbury, solve_rmatrix_gpu
   implicit real*8(a,b,d-h,o-z)
   implicit complex*16(c)
   dimension lval(nch), qk(nch), eta(nch), cpot(ncp1, ndim, ndim)
@@ -295,16 +296,11 @@ subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
       ! Mixed precision
       call solve_rmatrix_hp_mixed(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
     case (3)
-      ! Woodbury-Kinetic (fallback to dense for now)
-      call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
+      ! Woodbury-Kinetic - exploits matrix structure for O(n^2) instead of O(n^3)
+      call solve_rmatrix_woodbury(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
     case (4)
       ! GPU cuSOLVER
-#ifdef GPU_ENABLED
       call solve_rmatrix_gpu(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
-#else
-      ! Fallback to CPU if GPU not compiled
-      call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
-#endif
     case default
       ! Default to dense LAPACK
       call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
