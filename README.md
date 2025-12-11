@@ -224,26 +224,117 @@ where K is block-diagonal (kinetic energy) and UV represents coupling.
 4. Solve using CGETRS
 5. Transfer solution back to CPU
 
-## Code Structure
+## Language Bindings
 
-*[To be finalized: A clean API similar to Descouvemont's R-matrix package will be provided for easy integration]*
+HPRMAT provides bindings for multiple programming languages:
 
-### Planned Interface
+| Language | Method | Directory |
+|----------|--------|-----------|
+| **C/C++** | ISO_C_BINDING | `bindings/c/` |
+| **Python** | f2py (direct Fortran) | `bindings/python/` |
+| **Julia** | ccall (direct Fortran) | `bindings/julia/` |
 
-The final release will provide a simple subroutine interface compatible with Descouvemont's conventions:
+### Python Example
 
-```fortran
-! Example API (to be implemented)
-call hprmat_init(nch, nlag, solver_type)
-call hprmat_set_potential(V_coupling)
-call hprmat_solve(E, S_matrix)
-call hprmat_finalize()
+```python
+from hprmat import RMatrixSolver, SOLVER_DENSE
+import numpy as np
+
+# Initialize solver
+solver = RMatrixSolver(nr=30, ns=1, rmax=10.0)
+
+# Single channel setup
+lval = np.array([0], dtype=np.int32)
+qk = np.array([0.5], dtype=np.float64)
+eta = np.array([0.0], dtype=np.float64)
+
+# Define potential
+cpot = np.zeros((30, 1, 1), dtype=np.complex128, order='F')
+for ir, r in enumerate(solver.mesh):
+    cpot[ir, 0, 0] = -50.0 * np.exp(-r**2 / 4.0)
+
+# Solve and get S-matrix
+S, nopen = solver.solve(lval, qk, eta, cpot)
+print(f"S-matrix: {S[0,0]}")
 ```
 
-### Design Goals
-- Drop-in replacement for existing R-matrix codes
-- Minimal code changes required for users of Descouvemont's package
-- Clear separation of solver backend from physics interface
+### Julia Example
+
+```julia
+include("HPRMAT.jl")
+using .HPRMAT
+
+# Initialize solver
+solver = RMatrixSolver(30, 1, 10.0)
+
+# Single channel setup
+lval = Int32[0]
+qk = [0.5]
+eta = [0.0]
+
+# Define potential
+cpot = zeros(ComplexF64, 30, 1, 1)
+for (ir, r) in enumerate(solver.mesh)
+    cpot[ir, 1, 1] = -50.0 * exp(-r^2 / 4.0)
+end
+
+# Solve and get S-matrix
+S, nopen = solve(solver, lval, qk, eta, cpot)
+println("S-matrix: ", S[1,1])
+```
+
+### Building Bindings
+
+```bash
+cd bindings
+make lib       # Build shared library
+make python    # Build Python module
+```
+
+See `bindings/README.md` for detailed documentation.
+
+## Code Structure
+
+```
+HPRMAT/
+├── src/
+│   ├── rmatrix_hp.F90         # Main R-matrix solver interface
+│   ├── rmat_solvers.F90       # Four solver implementations (Dense, Mixed, Woodbury, GPU)
+│   ├── gpu_solver_interface.F90  # CUDA cuSOLVER wrapper
+│   ├── precision.F90          # Precision definitions
+│   ├── constants.F90          # Physical constants
+│   ├── special_functions.f    # Coulomb/Whittaker functions
+│   └── angular_momentum.f     # 3j/6j/9j coefficients
+├── examples/
+│   ├── Ex0/                   # Large matrix benchmark
+│   │   ├── test_solver.f90    # Basic solver test
+│   │   └── benchmark_large.f90  # Performance benchmark
+│   ├── Ex1/example1_hp.f90    # Alpha-Alpha scattering (1 channel)
+│   ├── Ex2/example2_hp.f90    # Reid NN potential (2 channels)
+│   ├── Ex3/example3_hp.f90    # 16O+44Ca scattering (4 channels)
+│   ├── Ex4/example4_hp.f90    # 12C+alpha scattering (12 channels)
+│   └── Ex5/example5_hp.f90    # Yamaguchi non-local potential
+├── bindings/
+│   ├── c/                     # C/C++ interface
+│   ├── python/                # Python wrapper
+│   └── julia/                 # Julia module
+├── rmat_pierre/               # Pierre Descouvemont's original code (reference)
+└── lib/                       # Compiled libraries
+```
+
+### Fortran API
+
+```fortran
+use rmat_hp_mod
+
+! Set solver type (1=Dense, 2=Mixed, 3=Woodbury, 4=GPU)
+solver_type = 1
+
+! Call R-matrix solver
+call rmatrix(nc, lval, qk, eta, rmax, nr, ns, cpot, cu, &
+             nmax, nc, nopen, twf, cf, nmax, nc, nc0, nvc, &
+             0, cc, solver_type)
+```
 
 ## Why HPRMAT?
 
