@@ -138,10 +138,10 @@ GPU_ARCH = sm_86  # Set according to your GPU (see table below)
 
 | GPU | Architecture | GPU_ARCH |
 |-----|--------------|----------|
-| RTX 2080/2070 | Turing | sm_75 |
-| RTX 3090/3080/3070 | Ampere | sm_86 |
-| RTX 4090/4080/4070 | Ada Lovelace | sm_89 |
-| RTX 5090/5080 | Blackwell | sm_120 |
+| RTX 2080/2070/2060 | Turing | sm_75 |
+| RTX 3090/3080/3070/3060 | Ampere | sm_86 |
+| RTX 4090/4080/4070/4060 | Ada Lovelace | sm_89 |
+| RTX 5090/5080/5070/5060 | Blackwell | sm_120 |
 | V100 | Volta | sm_70 |
 | A100 | Ampere | sm_80 |
 | H100 | Hopper | sm_90 |
