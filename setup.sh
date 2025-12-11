@@ -89,16 +89,79 @@ if [ "$OS" = "Darwin" ]; then
         echo "Using Apple Accelerate framework"
     fi
 else
-    # Linux
-    if [ -f "/usr/lib/x86_64-linux-gnu/libopenblas.so" ]; then
-        BLAS_LIBS="-L/usr/lib/x86_64-linux-gnu -lopenblas"
-        echo "OpenBLAS found"
-    elif [ -f "/usr/lib64/libopenblas.so" ]; then
-        BLAS_LIBS="-L/usr/lib64 -lopenblas"
-        echo "OpenBLAS found"
-    else
-        BLAS_LIBS="-llapack -lblas"
-        echo "Using system LAPACK/BLAS"
+    # Linux - search for OpenBLAS in common locations
+    OPENBLAS_FOUND="false"
+    OPENBLAS_PATHS=(
+        "/usr/lib/x86_64-linux-gnu/openblas-openmp"
+        "/usr/lib/x86_64-linux-gnu/openblas-pthread"
+        "/usr/lib/x86_64-linux-gnu"
+        "/usr/lib64/openblas-openmp"
+        "/usr/lib64/openblas-pthread"
+        "/usr/lib64"
+        "/usr/local/lib"
+        "/opt/openblas/lib"
+    )
+
+    for OPATH in "${OPENBLAS_PATHS[@]}"; do
+        if [ -f "$OPATH/libopenblas.so" ] || [ -f "$OPATH/libopenblas.a" ]; then
+            BLAS_LIBS="-L$OPATH -lopenblas"
+            echo "OpenBLAS found: $OPATH"
+            OPENBLAS_FOUND="true"
+            break
+        fi
+    done
+
+    # Also check via ldconfig
+    if [ "$OPENBLAS_FOUND" = "false" ]; then
+        OPENBLAS_LIB=$(ldconfig -p 2>/dev/null | grep libopenblas | head -1 | awk '{print $NF}')
+        if [ -n "$OPENBLAS_LIB" ]; then
+            OPENBLAS_DIR=$(dirname "$OPENBLAS_LIB")
+            BLAS_LIBS="-L$OPENBLAS_DIR -lopenblas"
+            echo "OpenBLAS found via ldconfig: $OPENBLAS_DIR"
+            OPENBLAS_FOUND="true"
+        fi
+    fi
+
+    if [ "$OPENBLAS_FOUND" = "false" ]; then
+        echo "OpenBLAS not found. Attempting to install..."
+        # Try to install OpenBLAS
+        if command -v apt &> /dev/null; then
+            sudo apt update && sudo apt install -y libopenblas-openmp-dev
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y openblas-devel
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y openblas-devel
+        fi
+
+        # Search again after installation
+        for OPATH in "${OPENBLAS_PATHS[@]}"; do
+            if [ -f "$OPATH/libopenblas.so" ] || [ -f "$OPATH/libopenblas.a" ]; then
+                BLAS_LIBS="-L$OPATH -lopenblas"
+                echo "OpenBLAS installed successfully: $OPATH"
+                OPENBLAS_FOUND="true"
+                break
+            fi
+        done
+
+        # Check via ldconfig again
+        if [ "$OPENBLAS_FOUND" = "false" ]; then
+            sudo ldconfig 2>/dev/null
+            OPENBLAS_LIB=$(ldconfig -p 2>/dev/null | grep libopenblas | head -1 | awk '{print $NF}')
+            if [ -n "$OPENBLAS_LIB" ]; then
+                OPENBLAS_DIR=$(dirname "$OPENBLAS_LIB")
+                BLAS_LIBS="-L$OPENBLAS_DIR -lopenblas"
+                echo "OpenBLAS installed successfully: $OPENBLAS_DIR"
+                OPENBLAS_FOUND="true"
+            fi
+        fi
+
+        if [ "$OPENBLAS_FOUND" = "false" ]; then
+            BLAS_LIBS="-llapack -lblas"
+            echo "WARNING: OpenBLAS not available, using system LAPACK/BLAS (slow)"
+            echo "Please install OpenBLAS manually for better performance:"
+            echo "  Ubuntu/Debian: sudo apt install libopenblas-openmp-dev"
+            echo "  CentOS/RHEL:   sudo yum install openblas-devel"
+        fi
     fi
 fi
 
