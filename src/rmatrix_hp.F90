@@ -160,16 +160,22 @@ end subroutine rmat_ini
 !
 ! Key improvement: Uses ZGESV (linear solve) instead of matrix inversion,
 ! which is significantly faster for large matrices.
+!
+! Extra parameter:
+!   isolver - Optional solver type (1=Dense LAPACK, 2=Mixed Precision,
+!             3=Woodbury-Kinetic, 4=GPU cuSOLVER)
 !------------------------------------------------------------------------------
 subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
-                   ncp1, ndim, nopen, twf, cf, nwf1, nwf2, nc, nvc, ncp2, cpnl)
+                   ncp1, ndim, nopen, twf, cf, nwf1, nwf2, nc, nvc, ncp2, cpnl, isolver)
   use rmat_hp_mod
   implicit real*8(a,b,d-h,o-z)
   implicit complex*16(c)
   dimension lval(nch), qk(nch), eta(nch), cpot(ncp1, ndim, ndim)
   dimension cu(ndim, ndim), cf(nwf1, nwf2, nc), nvc(nc), cx(3)
   dimension cpnl(ncp2, ndim, ndim)
+  integer, intent(in), optional :: isolver
   logical twf, tnl
+  integer :: local_solver
   allocatable ch(:,:,:), crma(:,:,:,:), co(:), cop(:)
   allocatable cz(:,:), crma0(:,:,:), crma2(:,:,:), fc(:), dfc(:), gc(:), dgc(:)
   allocatable cfp(:,:), npo(:,:), xc(:,:)
@@ -178,6 +184,13 @@ subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
   complex*16, allocatable :: B_vector(:), Rmat_local(:,:)
   integer :: IPIV_local(nch)
   integer :: INFO_local
+
+  ! Set local solver type
+  if (present(isolver)) then
+    local_solver = isolver
+  else
+    local_solver = solver_type
+  end if
 
   tnl = ncp2 /= 0
   if (tnl .and. ns /= 1) then
@@ -274,13 +287,24 @@ subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
     ! Use linear equation solving instead of matrix inversion
     B_vector(:) = q2(:, is)
 
-    select case (solver_type)
+    select case (local_solver)
     case (1)
       ! Dense LAPACK - solve using ZGESV
       call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
     case (2)
       ! Mixed precision
       call solve_rmatrix_hp_mixed(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
+    case (3)
+      ! Woodbury-Kinetic (fallback to dense for now)
+      call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
+    case (4)
+      ! GPU cuSOLVER
+#ifdef GPU_ENABLED
+      call solve_rmatrix_gpu(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
+#else
+      ! Fallback to CPU if GPU not compiled
+      call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
+#endif
     case default
       ! Default to dense LAPACK
       call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
@@ -290,9 +314,11 @@ subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
 
     ! For propagation, also need R01, R10
     if (is > 1 .or. ns > 1) then
-      ! Compute R matrices with q1 boundary
+      ! Compute R matrices with q1 and q2 boundaries
+      ! solve_rmatrix_hp_4 outputs: R00=<q1|C^-1|q1>, R01=<q1|C^-1|q2>, R11=<q2|C^-1|q2>
+      ! But Pierre's convention is: crma(:,:,1)=R11, crma(:,:,2)=R01, crma(:,:,3)=R00
       call solve_rmatrix_hp_4(ch(:,:,is), q1(:,is), q2(:,is), nch, nr, 1.0d0, &
-                              crma(:,:,1,is), crma(:,:,2,is), crma(:,:,3,is))
+                              crma(:,:,3,is), crma(:,:,2,is), crma(:,:,1,is))
     end if
 
     ! Propagate R-matrix
@@ -501,7 +527,8 @@ subroutine solve_rmatrix_hp_4(cmat, B0, B1, nch, nlag, normfac, R00, R01, R11)
   implicit none
   integer, intent(in) :: nch, nlag
   real*8, intent(in) :: normfac
-  complex*16, intent(in) :: cmat(nch*nlag, nch*nlag), B0(nlag), B1(nlag)
+  complex*16, intent(in) :: cmat(nch*nlag, nch*nlag)
+  real*8, intent(in) :: B0(nlag), B1(nlag)
   complex*16, intent(out) :: R00(nch, nch), R01(nch, nch), R11(nch, nch)
 
   complex*16, allocatable :: A_work(:,:), X_vector(:,:)
@@ -586,13 +613,21 @@ end subroutine cminv_nsym_hp
 !------------------------------------------------------------------------------
 subroutine wf_print(nch, lval, qk, eta, rmax, nr, ns, cu, &
                     ndim, nopen, cf, nwf1, nwf2, zrma, iv, nom, npoin, h, cwftab)
-  implicit real*8(a-h,o-z)
-  implicit complex*16(c)
-  dimension lval(nch), qk(nch), eta(nch), cu(ndim, ndim)
-  dimension cf(nwf1, nwf2, nom), cwftab(npoin), zrma(ns*nr)
-  dimension xfr(ns*nr), xfi(ns*nr), y2r(ns*nr), y2i(ns*nr)
-  dimension fc(500), dfc(500), gc(500), dgc(500)
-  data yp1, ypn/2*1.0d30/
+  implicit none
+  integer, intent(in) :: nch, nr, ns, ndim, nopen, nwf1, nwf2, nom, iv, npoin
+  integer, intent(in) :: lval(nch)
+  real*8, intent(in) :: qk(nch), eta(nch), rmax, zrma(ns*nr), h
+  complex*16, intent(in) :: cu(ndim, ndim), cf(nwf1, nwf2, nom)
+  complex*16, intent(out) :: cwftab(npoin)
+
+  integer :: nsr, nop, nclo, iw, i, ll, ifail, jw
+  real*8 :: r, wfr, wfi, xl, yp1, yp2
+  real*8 :: xfr(ns*nr), xfi(ns*nr), y2r(ns*nr), y2i(ns*nr)
+  real*8 :: fc(500), dfc(500), gc(500), dgc(500)
+  complex*16 :: co, cfx
+
+  yp1 = 1.0d30
+  yp2 = 1.0d30
 
   nsr = ns * nr
   nop = 0

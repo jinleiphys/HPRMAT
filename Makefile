@@ -26,7 +26,8 @@ SRCDIR = src
 OBJS = $(SRCDIR)/precision.o \
        $(SRCDIR)/constants.o \
        $(SRCDIR)/rmat_solvers.o \
-       $(SRCDIR)/rmatrix_hp.o
+       $(SRCDIR)/rmatrix_hp.o \
+       $(SRCDIR)/special_functions.o
 
 # GPU objects (optional)
 ifeq ($(GPU_ENABLED),true)
@@ -53,22 +54,28 @@ $(LIBNAME): $(OBJS)
 	@echo "Library: $(LIBNAME)"
 	@echo ""
 
+# Module output directory
+MODDIR = $(SRCDIR)
+
 # Fortran compilation rules
 $(SRCDIR)/precision.o: $(SRCDIR)/precision.F90
-	$(FC) $(FFLAGS) -c $< -o $@
+	$(FC) $(FFLAGS) -J$(MODDIR) -c $< -o $@
 
 $(SRCDIR)/constants.o: $(SRCDIR)/constants.F90 $(SRCDIR)/precision.o
-	$(FC) $(FFLAGS) -c $< -o $@
+	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
 
 $(SRCDIR)/rmat_solvers.o: $(SRCDIR)/rmat_solvers.F90 $(SRCDIR)/precision.o
-	$(FC) $(FFLAGS) -c $< -o $@
+	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
 
-$(SRCDIR)/rmatrix_hp.o: $(SRCDIR)/rmatrix_hp.f90
+$(SRCDIR)/rmatrix_hp.o: $(SRCDIR)/rmatrix_hp.F90
+	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
+
+$(SRCDIR)/special_functions.o: $(SRCDIR)/special_functions.f
 	$(FC) $(FFLAGS) -c $< -o $@
 
 # GPU compilation rules (if enabled)
 $(SRCDIR)/gpu_solver_interface.o: $(SRCDIR)/gpu_solver_interface.F90 $(SRCDIR)/precision.o
-	$(FC) $(FFLAGS) -c $< -o $@
+	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
 
 $(SRCDIR)/cusolver_interface.o: $(SRCDIR)/cusolver_interface.cu
 	$(NVCC) $(NVCCFLAGS) -arch=$(GPU_ARCH) -c $< -o $@
@@ -80,7 +87,7 @@ examples: $(LIBNAME)
 
 # Clean
 clean:
-	rm -f $(SRCDIR)/*.o $(SRCDIR)/*.mod $(LIBNAME)
+	rm -f $(SRCDIR)/*.o $(SRCDIR)/*.mod *.mod $(LIBNAME)
 	@echo "Cleaned."
 
 # Install (optional)

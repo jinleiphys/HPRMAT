@@ -1,0 +1,15 @@
+# Compiled objects
+*.o
+*.mod
+*.a
+
+# Executables
+examples/Ex0/test_solver
+examples/Ex1/example1_hp
+
+# Build configuration (generated)
+make.inc
+
+# Output files
+*.txt
+!README.txt
