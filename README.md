@@ -383,7 +383,7 @@ If you use HPRMAT in your research, please cite:
 @article{hprmat2025,
   title={HPRMAT: A high-performance R-matrix solver with GPU acceleration
          for coupled-channel problems in nuclear physics},
-  author={[Authors]},
+  author={Lei, Jin},
   journal={Computer Physics Communications},
   year={2025},
   note={In preparation}
@@ -409,7 +409,7 @@ If you use HPRMAT in your research, please cite:
 
 ## Authors
 
-[To be added]
+Jin Lei (jinleiphys@gmail.com)
 
 ## Acknowledgments
 
