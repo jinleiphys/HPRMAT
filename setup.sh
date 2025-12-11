@@ -45,20 +45,29 @@ if [ -n "$CUDA_PATH" ] && [ -f "$CUDA_PATH/bin/nvcc" ]; then
 
         # Map GPU name to architecture
         case "$GPU_NAME" in
-            *"RTX 30"*|*"A100"*|*"A6000"*)
-                GPU_ARCH="sm_86"
+            *"RTX 50"*)
+                GPU_ARCH="sm_120"  # Blackwell
                 ;;
-            *"RTX 40"*|*"H100"*)
-                GPU_ARCH="sm_89"
+            *"RTX 40"*)
+                GPU_ARCH="sm_89"   # Ada Lovelace
+                ;;
+            *"RTX 30"*|*"A6000"*)
+                GPU_ARCH="sm_86"   # Ampere (consumer)
+                ;;
+            *"A100"*)
+                GPU_ARCH="sm_80"   # Ampere (data center)
+                ;;
+            *"H100"*)
+                GPU_ARCH="sm_90"   # Hopper
                 ;;
             *"V100"*)
-                GPU_ARCH="sm_70"
+                GPU_ARCH="sm_70"   # Volta
                 ;;
             *"RTX 20"*|*"T4"*)
-                GPU_ARCH="sm_75"
+                GPU_ARCH="sm_75"   # Turing
                 ;;
             *)
-                GPU_ARCH="sm_70"
+                GPU_ARCH="sm_70"   # Default fallback
                 ;;
         esac
         GPU_ENABLED="true"
