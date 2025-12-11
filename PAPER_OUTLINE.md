@@ -157,7 +157,24 @@ Overview of remaining sections
 | 16000×16000 | 62.9s | 21.7s (2.9x) | 15.2s (4.1x) | 17.3s (3.6x) | 4.99s (12.6x) | **12.6x** |
 | 25600×25600 | 210.0s | 105.2s (2.0x) | 40.9s (5.1x) | 39.6s (5.3x) | 11.8s (17.8x) | **17.8x** |
 
-### 5.4 Solver Comparison Summary
+### 5.4 CPU Benchmark (Intel i9-12900)
+
+| Matrix Size | Pierre | Type 1 | Type 2 | Type 3 | Best Speedup |
+|-------------|--------|--------|--------|--------|--------------|
+| 100×100 | 0.058s | 0.000s (331x) | 0.053s (1.1x) | 0.000s (301x) | **331x** |
+| 400×400 | 0.077s | 0.003s (31x) | 0.025s (3.1x) | 0.002s (38x) | **38x** |
+| 1024×1024 | 0.146s | 0.227s (0.6x) | 0.020s (7.4x) | 0.021s (6.9x) | **7.4x** |
+| 2000×2000 | 0.294s | 0.393s (0.8x) | 0.123s (2.4x) | 0.114s (2.6x) | **2.6x** |
+| 3200×3200 | 1.115s | 0.557s (2.0x) | 0.414s (2.7x) | 0.336s (3.3x) | **3.3x** |
+| 4000×4000 | 2.207s | 0.840s (2.6x) | 0.539s (4.1x) | 0.555s (4.0x) | **4.1x** |
+| 6400×6400 | 8.44s | 3.00s (2.8x) | 2.79s (3.0x) | 2.36s (3.6x) | **3.6x** |
+| 8000×8000 | 21.9s | 7.04s (3.1x) | 6.51s (3.4x) | 4.76s (4.6x) | **4.6x** |
+| 10000×10000 | 48.1s | 18.5s (2.6x) | 12.1s (4.0x) | 11.3s (4.3x) | **4.3x** |
+| 12800×12800 | 99.5s | 35.8s (2.8x) | 22.9s (4.4x) | 23.4s (4.3x) | **4.4x** |
+| 16000×16000 | 163.0s | 54.7s (3.0x) | 36.9s (4.4x) | 32.9s (5.0x) | **5.0x** |
+| 25600×25600 | 679.3s | 217.6s (3.1x) | 125.1s (5.4x) | 120.1s (5.7x) | **5.7x** |
+
+### 5.5 Solver Comparison Summary
 
 | Solver | Method | Max Speedup | Max Error |
 |--------|--------|-------------|-----------|
@@ -166,14 +183,14 @@ Overview of remaining sections
 | Type 3 | Woodbury-Kinetic | 7x (CPU) | ~1E-6 |
 | Type 4 | GPU cuSOLVER | **18x** | ~1E-10 |
 
-### 5.5 Key Findings
+### 5.6 Key Findings
 
 - **GPU acceleration**: Up to **18x speedup** on RTX 3090 for large matrices
 - GPU advantage increases with matrix size (4x at 4000×4000 → 18x at 25600×25600)
 - CPU solvers (Type 2, 3) provide 5-7x speedup on Apple M3 Ultra
 - All solvers maintain sufficient accuracy for nuclear physics calculations
 
-### 5.6 Accuracy Validation
+### 5.7 Accuracy Validation
 
 **Physical Test Cases:**
 - Ex1: Alpha-Alpha scattering - S-matrix agrees to 5+ significant digits
