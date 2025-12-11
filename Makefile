@@ -27,7 +27,8 @@ OBJS = $(SRCDIR)/precision.o \
        $(SRCDIR)/constants.o \
        $(SRCDIR)/rmat_solvers.o \
        $(SRCDIR)/rmatrix_hp.o \
-       $(SRCDIR)/special_functions.o
+       $(SRCDIR)/special_functions.o \
+       $(SRCDIR)/angular_momentum.o
 
 # GPU objects (optional)
 ifeq ($(GPU_ENABLED),true)
@@ -71,6 +72,9 @@ $(SRCDIR)/rmatrix_hp.o: $(SRCDIR)/rmatrix_hp.F90
 	$(FC) $(FFLAGS) -J$(MODDIR) -I$(MODDIR) -c $< -o $@
 
 $(SRCDIR)/special_functions.o: $(SRCDIR)/special_functions.f
+	$(FC) $(FFLAGS) -c $< -o $@
+
+$(SRCDIR)/angular_momentum.o: $(SRCDIR)/angular_momentum.f
 	$(FC) $(FFLAGS) -c $< -o $@
 
 # GPU compilation rules (if enabled)
