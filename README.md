@@ -131,8 +131,22 @@ LIBSTD1 = -L$(OPENBLAS_DIR)/lib -lopenblas -fopenmp
 GPU_ENABLED = true
 CUDA_PATH = /usr/local/cuda
 NVCC = $(CUDA_PATH)/bin/nvcc
-GPU_ARCH = sm_86  # RTX 3090
+GPU_ARCH = sm_86  # Set according to your GPU (see table below)
 ```
+
+#### GPU Architecture Values
+
+| GPU | Architecture | GPU_ARCH |
+|-----|--------------|----------|
+| RTX 2080/2070 | Turing | sm_75 |
+| RTX 3090/3080/3070 | Ampere | sm_86 |
+| RTX 4090/4080/4070 | Ada Lovelace | sm_89 |
+| RTX 5090/5080 | Blackwell | sm_120 |
+| V100 | Volta | sm_70 |
+| A100 | Ampere | sm_80 |
+| H100 | Hopper | sm_90 |
+
+Note: The `setup.sh` script auto-detects your GPU architecture. Manual configuration is only needed if auto-detection fails.
 
 ## Usage
 
