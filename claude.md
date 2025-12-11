@@ -117,6 +117,67 @@
 | **Type 2** | 6.2141E-01 | 2.8269E-02 | ~0.06% |
 | **Type 3** | 6.1581E-01 | 2.8039E-02 | ~1% |
 
+## Algorithmic Complexity: R-matrix vs Numerov
+
+### Why R-matrix is Slower than FRESCO's Numerov Method
+
+For coupled-channel scattering calculations, R-matrix methods have fundamentally different computational complexity compared to direct integration methods like Numerov (used in FRESCO).
+
+#### Numerov Method (FRESCO)
+- **Complexity**: O(N² × n_steps)
+- Step-by-step radial integration
+- Each step: small N×N matrix operations (N = number of channels)
+- Typical: N ~ 10-100 channels, n_steps ~ 500-2000
+
+#### R-matrix Method (HPRMAT)
+- **Complexity**: O(M³) where M = N_channels × N_basis
+- Requires solving large linear system
+- Matrix dimension grows with both channels AND basis size
+- Typical: M = 12 channels × 100 basis = 1200
+
+#### Theoretical Operation Count
+
+| Problem | Numerov (FRESCO) | R-matrix (HPRMAT) | Ratio |
+|---------|------------------|-------------------|-------|
+| 12 channels, 500 steps | 12² × 500 = 72,000 | (12×100)³ = 1.7×10⁹ | ~24,000× |
+| 50 channels, 1000 steps | 50² × 1000 = 2.5×10⁶ | (50×50)³ = 1.6×10¹⁰ | ~6,000× |
+
+**Note**: The actual runtime difference is much smaller (typically 10-100×) due to:
+1. **BLAS/LAPACK optimization**: Dense matrix operations achieve near-peak FLOPS through vectorization (AVX/SSE) and cache optimization
+2. **Numerov overhead**: Each step requires potential evaluation, boundary handling, and has poor cache locality
+3. **GPU acceleration**: R-matrix can leverage GPU parallelism, reducing the gap further
+
+#### Why Use R-matrix Despite Higher Cost?
+
+1. **Physical Advantages**:
+   - Natural treatment of resonances (poles of R-matrix)
+   - Clear separation of internal and external regions
+   - Unified treatment of bound states, resonances, and scattering
+
+2. **Numerical Stability**:
+   - More stable for long-range Coulomb potentials
+   - Avoids Numerov instabilities in certain regimes
+   - Better convergence for narrow resonances
+
+3. **Flexibility**:
+   - Same R-matrix can be used for multiple energies (propagator methods)
+   - Natural framework for non-local potentials
+   - Easier inclusion of many-body effects
+
+4. **When R-matrix is Preferred**:
+   - Resonance analysis and fitting
+   - Nuclear data evaluation
+   - Problems with strong channel coupling near threshold
+   - Non-local or energy-dependent potentials
+
+#### Optimization Strategies
+
+To improve R-matrix performance:
+1. **Reduce basis size**: N_basis = 50 vs 100 gives 8× speedup
+2. **Use GPU acceleration**: Type 4 solver provides up to 18× speedup
+3. **Exploit sparsity**: If coupling matrix is sparse
+4. **Hybrid methods**: R-matrix in internal region + propagator in external region
+
 ## Conclusions
 
 1. **Type 1 (Dense LAPACK ZGESV)**:
