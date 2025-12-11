@@ -409,7 +409,7 @@ If you use HPRMAT in your research, please cite:
 
 ## Authors
 
-Jin Lei (jinleiphys@gmail.com)
+Jin Lei
 
 ## Acknowledgments
 
