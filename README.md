@@ -9,16 +9,20 @@ HPRMAT is a modern, high-performance implementation of the R-matrix method for s
 - **Linear equation solving** instead of matrix inversion
 - **GPU acceleration** via NVIDIA cuSOLVER
 - **Mixed-precision arithmetic** (FP32 LU factorization + FP64 iterative refinement)
+- **TF32 Tensor Core support** for Ampere+ GPUs (RTX 30/40 series)
 - **Optimized BLAS libraries** (OpenBLAS with multi-threading)
 - **Woodbury formula optimization** exploiting matrix structure
+- **Smart setup script** with auto-detection and conda CUDA installation
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
-| Multiple solver backends | Dense LAPACK, Mixed Precision, Woodbury-Kinetic, GPU cuSOLVER |
-| GPU acceleration | 3x speedup using NVIDIA cuSOLVER with FP32 |
+| Multiple solver backends | Dense LAPACK, Mixed Precision, Woodbury-Kinetic, GPU cuSOLVER, GPU TF32 |
+| GPU acceleration | Up to 18x speedup using NVIDIA cuSOLVER |
+| TF32 Tensor Core | Additional speedup on Ampere+ GPUs (RTX 30/40 series) |
 | Parallel BLAS | Full utilization of multi-core CPUs via OpenBLAS |
+| Smart setup | Auto-detects GPU, CUDA, OpenBLAS; can install CUDA via conda |
 | Lagrange-Legendre basis | Efficient matrix element evaluation with Gauss-Legendre quadrature |
 | Open/closed channels | Simultaneous treatment without numerical instability |
 | Long-range potentials | Propagation techniques for Coulomb interactions |
@@ -91,7 +95,8 @@ Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to sol
 | Type 1 | ~1E-18 | Machine precision (identical to Pierre's original) |
 | Type 2 | ~1E-16 | Double precision (high accuracy) |
 | Type 3 | ~1E-6 | Sufficient for nuclear physics calculations |
-| Type 4 | ~1E-10 | GPU mixed precision (excellent accuracy) |
+| Type 4 | ~1E-10 | GPU FP32 mixed precision (excellent accuracy) |
+| Type 5 | ~1E-10 | GPU TF32 Tensor Core (Ampere+ GPUs, slightly faster) |
 
 ### Physical Validation
 
@@ -106,16 +111,41 @@ All solvers validated against Descouvemont's reference code (CPC 200, 2016):
 - Fortran compiler (gfortran 9+ recommended)
 - LAPACK and BLAS libraries
 - OpenBLAS (recommended for CPU performance)
-- NVIDIA CUDA Toolkit 11.5+ (for GPU support)
+- NVIDIA CUDA Toolkit 11.5+ (for GPU support, 12.0+ for TF32)
 
-### Building
+### Quick Start (Recommended)
+
+The smart `setup.sh` script automatically detects your environment:
 
 ```bash
-# Configure build (auto-detects GPU and OpenBLAS)
+# Run smart setup (auto-detects GPU, CUDA, OpenBLAS)
 ./setup.sh
 
-# Build the solver
-cd cookie && make clean && make
+# Build the library
+make
+
+# Build examples
+make examples
+```
+
+The setup script will:
+- Detect NVIDIA GPU and determine architecture (sm_86, sm_89, etc.)
+- Find CUDA installation (system or conda)
+- **Offer to install CUDA 12.9 via conda** if version is too old
+- Find OpenBLAS or offer to install it
+- Generate optimized `make.inc` configuration
+
+### Installing CUDA via Conda
+
+If you don't have CUDA or need a newer version, the setup script can install it:
+
+```bash
+./setup.sh
+# Answer 'y' when prompted to install CUDA via conda
+
+# For conda CUDA, activate the environment before building:
+source activate_cuda.sh
+make
 ```
 
 ### Manual Configuration
@@ -158,7 +188,8 @@ Set `solver_type` in your input file:
 solver_type = 1   ! Dense LAPACK (ZGESV) - reference implementation
 solver_type = 2   ! Mixed Precision (CGETRF + refinement)
 solver_type = 3   ! Woodbury-Kinetic - fastest on CPU
-solver_type = 4   ! GPU cuSOLVER - fastest with NVIDIA GPU
+solver_type = 4   ! GPU cuSOLVER (FP32) - fastest with NVIDIA GPU
+solver_type = 5   ! GPU TF32 - Tensor Core acceleration (Ampere+ GPUs)
 ```
 
 ### Recommended Configuration
@@ -166,7 +197,8 @@ solver_type = 4   ! GPU cuSOLVER - fastest with NVIDIA GPU
 | Environment | Recommended Solver |
 |-------------|-------------------|
 | CPU only (no GPU) | `solver_type = 3` (Woodbury-Kinetic) |
-| NVIDIA GPU available | `solver_type = 4` (GPU cuSOLVER) |
+| NVIDIA GPU (any) | `solver_type = 4` (GPU cuSOLVER) |
+| NVIDIA Ampere+ GPU (RTX 30/40) | `solver_type = 5` (GPU TF32) |
 | Debugging/validation | `solver_type = 1` (Dense LAPACK) |
 
 ### Example Input
@@ -237,6 +269,15 @@ where K is block-diagonal (kinetic energy) and UV represents coupling.
 3. LU factorization using cuSOLVER CGETRF
 4. Solve using CGETRS
 5. Transfer solution back to CPU
+
+#### GPU TF32 (solver_type=5)
+Uses TensorFloat-32 format on Ampere+ GPUs (RTX 30/40 series, sm_80+):
+1. Enable CUBLAS_TF32_TENSOR_OP_MATH mode
+2. LU factorization with Tensor Core acceleration
+3. FP64 iterative refinement (5 iterations by default)
+4. Falls back to FP32 (Type 4) on older GPUs
+
+TF32 has FP32's dynamic range (8-bit exponent) with reduced mantissa (10-bit), providing ~7-8% speedup over FP32 while maintaining the same accuracy through iterative refinement.
 
 ## Language Bindings
 
@@ -313,7 +354,7 @@ See `bindings/README.md` for detailed documentation.
 HPRMAT/
 ├── src/
 │   ├── rmatrix_hp.F90         # Main R-matrix solver interface
-│   ├── rmat_solvers.F90       # Four solver implementations (Dense, Mixed, Woodbury, GPU)
+│   ├── rmat_solvers.F90       # Five solver implementations (Dense, Mixed, Woodbury, GPU, TF32)
 │   ├── gpu_solver_interface.F90  # CUDA cuSOLVER wrapper
 │   ├── precision.F90          # Precision definitions
 │   ├── constants.F90          # Physical constants
@@ -341,7 +382,7 @@ HPRMAT/
 ```fortran
 use rmat_hp_mod
 
-! Set solver type (1=Dense, 2=Mixed, 3=Woodbury, 4=GPU)
+! Set solver type (1=Dense, 2=Mixed, 3=Woodbury, 4=GPU, 5=TF32)
 solver_type = 1
 
 ! Call R-matrix solver

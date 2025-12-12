@@ -35,7 +35,8 @@
 | Type 1 | Dense LAPACK | ZGESV linear system solver |
 | Type 2 | Mixed Precision | Single-precision LU + double-precision iterative refinement |
 | Type 3 | Woodbury | Exploits matrix structure via Woodbury formula |
-| Type 4 | GPU cuSOLVER | NVIDIA GPU with mixed precision |
+| Type 4 | GPU cuSOLVER | NVIDIA GPU with FP32 mixed precision |
+| Type 5 | GPU TF32 | NVIDIA GPU with TF32 Tensor Core (Ampere+ GPUs) |
 
 ## Performance Comparison
 
@@ -95,7 +96,8 @@
 | Type 1 | ~1E-18 (machine precision) |
 | Type 2 | ~1E-16 (double precision) |
 | Type 3 | ~1E-6 (sufficient for nuclear physics) |
-| Type 4 | ~1E-10 (GPU mixed precision) |
+| Type 4 | ~1E-10 (GPU FP32 mixed precision) |
+| Type 5 | ~1E-10 (GPU TF32 Tensor Core) |
 
 ### Physical Problem Tests
 
@@ -196,11 +198,17 @@ To improve R-matrix performance:
    - Accuracy ~1E-6, sufficient for nuclear physics
    - **Recommended for CPU-only large-scale calculations**
 
-4. **Type 4 (GPU cuSOLVER)** ⭐:
+4. **Type 4 (GPU cuSOLVER FP32)**:
    - **Best performance overall**, up to **18x speedup** on RTX 3090
    - GPU advantage increases with matrix size
    - Accuracy ~1E-10 (excellent for nuclear physics)
-   - **Recommended for all large-scale calculations when GPU available**
+   - **Recommended for NVIDIA GPUs without Tensor Core (pre-Ampere)**
+
+5. **Type 5 (GPU TF32 Tensor Core)** ⭐:
+   - Uses TensorFloat-32 format on Ampere+ GPUs (RTX 30/40 series)
+   - ~7-8% faster than Type 4 with same accuracy
+   - Falls back to Type 4 on older GPUs
+   - **Recommended for Ampere+ GPUs (sm_80+)**
 
 ## Test Cases
 
@@ -240,7 +248,7 @@ To improve R-matrix performance:
 HPRMAT/
 ├── src/
 │   ├── rmatrix_hp.F90      # Main solver interface
-│   ├── rmat_solvers.F90    # Four solver implementations
+│   ├── rmat_solvers.F90    # Five solver implementations
 │   ├── special_functions.f  # Coulomb/Whittaker functions
 │   └── angular_momentum.f   # 3j/6j coefficients
 ├── examples/
@@ -259,7 +267,7 @@ HPRMAT/
 use rmat_hp_mod
 
 ! Set solver type
-solver_type = 1  ! 1=Dense, 2=Mixed, 3=Woodbury, 4=GPU
+solver_type = 1  ! 1=Dense, 2=Mixed, 3=Woodbury, 4=GPU, 5=TF32
 
 ! Call R-matrix solver
 call rmatrix(nc, lval, qk, eta, rmax, nr, ns, cpot, cu, &
