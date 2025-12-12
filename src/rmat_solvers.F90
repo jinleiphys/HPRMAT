@@ -11,6 +11,7 @@
 !   solver_type=2: Mixed Precision (CGETRF + refinement, ~5% faster)
 !   solver_type=3: Woodbury-Kinetic (CPU optimized, ~13% faster)
 !   solver_type=4: GPU cuSOLVER (requires GPU, ~3x faster)
+!   solver_type=5: GPU TF32 (TensorFloat-32 Tensor Core, Ampere+ GPUs)
 !
 ! Reference:
 !   Based on the Lagrange-mesh R-matrix method described in:
@@ -29,6 +30,7 @@ module rmat_solvers
   public :: solve_rmatrix_mixed      ! solver_type=2
   public :: solve_rmatrix_woodbury   ! solver_type=3
   public :: solve_rmatrix_gpu        ! solver_type=4
+  public :: solve_rmatrix_tf32       ! solver_type=5
   public :: solve_rmatrix            ! Unified interface with solver selection
 
   ! Public propagation routine
@@ -69,6 +71,8 @@ subroutine solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type, 
     end if
   case (4)
     call solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
+  case (5)
+    call solve_rmatrix_tf32(cmat, B_vector, nch, nlag, normfac, Rmat)
   case default
     call solve_rmatrix_dense(cmat, B_vector, nch, nlag, normfac, Rmat)
   end select
@@ -471,7 +475,13 @@ end subroutine solve_rmatrix_woodbury
 ! Uses NVIDIA cuSOLVER for GPU-accelerated solving. Falls back to CPU ZGESV
 ! if GPU is not available or if compilation was done without GPU support.
 !
-! Typically ~3x faster than CPU for large matrices (n > 1000).
+! Features:
+! - Automatic single/multi-GPU selection based on matrix size and GPU count
+! - Single GPU: Mixed precision (FP32 LU + FP64 refinement) for speed
+! - Multi-GPU: Full double precision with data distributed across GPUs
+! - Transparent fallback to CPU if GPU unavailable
+!
+! Typically ~3-18x faster than CPU for large matrices (n > 1000).
 !------------------------------------------------------------------------------
 subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
 #ifdef GPU_ENABLED
@@ -507,8 +517,9 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   end do
 
 #ifdef GPU_ENABLED
-  ! GPU solver
-  call gpu_solve_mixed(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
+  ! GPU solver - automatically chooses single or multi-GPU
+  ! based on matrix size and number of available GPUs
+  call gpu_solve_auto(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
 
   if (info /= 0) then
     ! Fallback to CPU
@@ -548,6 +559,73 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   deallocate(A_copy, X_vector)
 
 end subroutine solve_rmatrix_gpu
+
+!------------------------------------------------------------------------------
+! GPU TF32 (TensorFloat-32) Solver (solver_type=5)
+!
+! Uses TF32 precision on NVIDIA Ampere+ GPUs (RTX 30/40 series, A100, H100)
+! TF32 uses Tensor Cores with:
+!   - 8-bit exponent (same dynamic range as FP32)
+!   - 10-bit mantissa (same as FP16, but safer due to FP32 range)
+!
+! Falls back to FP32 mixed precision on older GPUs (Volta, Turing).
+! Requires more iterative refinement than FP32 to recover accuracy.
+!------------------------------------------------------------------------------
+subroutine solve_rmatrix_tf32(cmat, B_vector, nch, nlag, normfac, Rmat)
+#ifdef GPU_ENABLED
+  use gpu_solver_interface
+#endif
+  implicit none
+  integer, intent(in) :: nch, nlag
+  real(dp), intent(in) :: normfac
+  complex(dp), intent(in) :: cmat(nch*nlag, nch*nlag), B_vector(nlag)
+  complex(dp), intent(out) :: Rmat(nch, nch)
+
+  complex(dp), allocatable :: A_copy(:,:), X_vector(:,:)
+  integer :: ich, ichp, ir, ntotal, info
+
+  ntotal = nch * nlag
+
+  allocate(A_copy(ntotal, ntotal))
+  allocate(X_vector(ntotal, nch))
+
+  ! Copy matrix and set up RHS
+  A_copy = cmat
+  X_vector = (0.0_dp, 0.0_dp)
+  do ich = 1, nch
+    do ir = 1, nlag
+      X_vector(ir + (ich-1)*nlag, ich) = B_vector(ir)
+    end do
+  end do
+
+#ifdef GPU_ENABLED
+  ! Use GPU TF32 solver with 5 refinement iterations
+  call gpu_solve_tf32(A_copy, X_vector, ntotal, nch, 5, 1.0d-12, info)
+#else
+  ! Fallback to CPU ZGESV
+  block
+    integer :: IPIV(ntotal)
+    call ZGESV(ntotal, nch, A_copy, ntotal, IPIV, X_vector, ntotal, info)
+  end block
+#endif
+
+  ! Extract R-matrix elements
+  Rmat = (0.0_dp, 0.0_dp)
+  if (info == 0) then
+    do ichp = 1, nch
+      do ich = 1, nch
+        do ir = 1, nlag
+          Rmat(ich, ichp) = Rmat(ich, ichp) + &
+              B_vector(ir) * X_vector(ir + (ich-1)*nlag, ichp)
+        end do
+      end do
+    end do
+    Rmat = Rmat * normfac
+  end if
+
+  deallocate(A_copy, X_vector)
+
+end subroutine solve_rmatrix_tf32
 
 !------------------------------------------------------------------------------
 ! R-matrix Propagation for Multi-interval Calculations
