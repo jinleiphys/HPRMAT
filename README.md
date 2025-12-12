@@ -338,15 +338,110 @@ S, nopen = solve(solver, lval, qk, eta, cpot)
 println("S-matrix: ", S[1,1])
 ```
 
-### Building Bindings
+### Building and Testing
+
+#### Project Structure
+
+```
+HPRMAT/
+├── Makefile              # Main library build
+├── bindings/
+│   ├── Makefile          # Shared library (libhprmat)
+│   ├── c/Makefile        # C bindings
+│   ├── python/Makefile   # Python bindings (f2py)
+│   └── julia/            # Julia module (no build needed)
+```
+
+#### Step 1: Build Main Library
+
+```bash
+# Configure (auto-detects GPU, CUDA, OpenBLAS)
+./setup.sh
+
+# Build static library (libhprmat.a)
+make
+
+# Build examples
+make examples
+```
+
+**Output**: `libhprmat.a` in project root
+
+#### Step 2: Build Shared Library (for bindings)
 
 ```bash
 cd bindings
-make lib       # Build shared library
-make python    # Build Python module
+make lib
 ```
 
-See `bindings/README.md` for detailed documentation.
+**Output**: `lib/libhprmat.dylib` (macOS) or `lib/libhprmat.so` (Linux)
+
+#### Step 3: Build Language Bindings
+
+##### C Bindings
+
+```bash
+cd bindings/c
+make
+```
+
+**Output**: `test_ex1` executable
+
+**Run**:
+```bash
+# macOS
+DYLD_LIBRARY_PATH=../../lib ./test_ex1
+
+# Linux
+LD_LIBRARY_PATH=../../lib ./test_ex1
+```
+
+##### Python Bindings
+
+```bash
+cd bindings/python
+make
+```
+
+**Output**: `hprmat_fortran.cpython-*.so`
+
+**Test**:
+```bash
+python -c "from hprmat import RMatrixSolver; print('OK')"
+python test_ex1.py
+```
+
+##### Julia Bindings
+
+No build needed. Just ensure the shared library is built.
+
+```bash
+cd bindings/julia
+DYLD_LIBRARY_PATH=../../lib julia test_ex1.jl
+```
+
+#### Quick Build (All at Once)
+
+```bash
+# From project root
+./setup.sh
+make
+cd bindings && make lib && make python
+cd c && make
+```
+
+#### Makefile Summary
+
+| Location | Command | Output | Description |
+|----------|---------|--------|-------------|
+| `/` | `make` | `libhprmat.a` | Static library |
+| `/` | `make examples` | `examples/Ex*/` | Example executables |
+| `bindings/` | `make lib` | `lib/libhprmat.so` | Shared library |
+| `bindings/` | `make python` | Python `.so` | Python f2py module |
+| `bindings/c/` | `make` | `test_ex1` | C test executable |
+| `bindings/c/` | `make test` | - | Run C test |
+| `bindings/python/` | `make` | `hprmat_fortran.so` | Python module |
+| `bindings/python/` | `make test` | - | Run Python test |
 
 ## Code Structure
 
