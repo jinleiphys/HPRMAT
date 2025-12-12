@@ -14,13 +14,16 @@ endif
 
 .PHONY: all clean test
 
-all: example_alpha_alpha
+all: test_ex1
+	@echo ""
+	@echo "Build complete! To run:"
+	@echo "  $(RUN_ENV) ./test_ex1"
 
-example_alpha_alpha: example_alpha_alpha.c hprmat.h
+test_ex1: test_ex1.c hprmat.h
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
-test: example_alpha_alpha
-	$(RUN_ENV) ./example_alpha_alpha
+test: test_ex1
+	$(RUN_ENV) ./test_ex1
 
 clean:
-	rm -f example_alpha_alpha
+	rm -f test_ex1
