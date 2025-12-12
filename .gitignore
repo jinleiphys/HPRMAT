@@ -2,10 +2,15 @@
 *.o
 *.mod
 *.a
+*.so
+*.dylib
 
 # Executables
-examples/Ex0/test_solver
-examples/Ex1/example1_hp
+examples/Ex*/example*_hp
+examples/Ex*/benchmark*
+examples/Ex*/test_*
+rmat_pierre/Ex*/example*_pierre
+bindings/c/test_ex1
 
 # Build configuration (generated)
 make.inc
@@ -13,3 +18,16 @@ make.inc
 # Output files
 *.txt
 !README.txt
+
+# Build directories
+lib/
+bindings/build/
+bindings/python/build/
+bindings/python/dist/
+bindings/python/*.egg-info/
+bindings/python/.venv/
+bindings/python/*.so
+
+# Python cache
+__pycache__/
+*.pyc

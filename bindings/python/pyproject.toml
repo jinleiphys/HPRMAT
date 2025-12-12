@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0", "numpy>=1.20"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hprmat"
+version = "1.0.0"
+description = "High-Performance R-Matrix Solver for Nuclear Physics"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Jin Lei"}
+]
+keywords = [
+    "nuclear physics",
+    "R-matrix",
+    "scattering",
+    "coupled-channel",
+    "LAPACK",
+    "GPU",
+    "cuSOLVER",
+    "Fortran"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Fortran",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.urls]
+Homepage = "https://github.com/jinlei/hprmat"
+Documentation = "https://github.com/jinlei/hprmat#readme"
+Repository = "https://github.com/jinlei/hprmat"
+Issues = "https://github.com/jinlei/hprmat/issues"
+
+[tool.setuptools]
+packages = ["hprmat"]
+package-dir = {"hprmat" = "."}
+
+[tool.setuptools.package-data]
+hprmat = ["*.so", "*.dylib", "*.pyd"]

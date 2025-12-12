@@ -19,7 +19,7 @@ Reference: Goldring et al., Phys. Lett. B32 (1970) 465
 # Load the HPRMAT module
 # The module provides: rmat_init(), rmatrix(), and solver constants
 # =============================================================================
-include("HPRMAT.jl")
+include("src/HPRMAT.jl")
 using .HPRMAT
 using Printf
 

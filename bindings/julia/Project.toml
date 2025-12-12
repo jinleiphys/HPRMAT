@@ -1,0 +1,15 @@
+name = "HPRMAT"
+uuid = "ec7a2968-cfb7-4a13-9689-968047dd2a3a"
+version = "1.0.0"
+authors = ["Jin Lei"]
+
+[deps]
+
+[compat]
+julia = "1.6"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

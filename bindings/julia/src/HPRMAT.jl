@@ -5,8 +5,7 @@ Simple interface to the HPRMAT Fortran library.
 
 # Example
 ```julia
-include("HPRMAT.jl")
-using .HPRMAT
+using HPRMAT
 
 # Initialize
 zrma = rmat_init(60, 1, 14.0)
@@ -29,10 +28,15 @@ const SOLVER_GPU = 4
 # Find library
 function find_lib()
     paths = [
-        joinpath(@__DIR__, "..", "..", "lib", "libhprmat.dylib"),
-        joinpath(@__DIR__, "..", "..", "lib", "libhprmat.so"),
+        # From src/ -> julia/ -> bindings/ -> HPRMAT/ -> lib/
+        joinpath(@__DIR__, "..", "..", "..", "lib", "libhprmat.dylib"),
+        joinpath(@__DIR__, "..", "..", "..", "lib", "libhprmat.so"),
+        # From src/ -> julia/ -> lib/ (if installed locally)
         joinpath(@__DIR__, "..", "lib", "libhprmat.dylib"),
         joinpath(@__DIR__, "..", "lib", "libhprmat.so"),
+        # System paths
+        "/usr/local/lib/libhprmat.dylib",
+        "/usr/local/lib/libhprmat.so",
     ]
     for p in paths
         isfile(p) && return p
