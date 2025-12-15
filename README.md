@@ -526,19 +526,6 @@ If you use HPRMAT in your research, please cite:
 }
 ```
 
-## References
-
-1. P. Descouvemont, "An R-matrix package for coupled-channel problems in nuclear physics,"
-   Comput. Phys. Commun. 200, 199-219 (2016). [arXiv:1510.03540](https://arxiv.org/abs/1510.03540)
-
-2. D. Baye, "The Lagrange-mesh method," Phys. Rep. 565, 1-107 (2015).
-
-3. A.M. Lane and R.G. Thomas, "R-Matrix Theory of Nuclear Reactions,"
-   Rev. Mod. Phys. 30, 257 (1958).
-
-4. C.J. Noble et al., "A parallel R-matrix program PRMAT for electron-atom
-   and electron-ion scattering calculations," Comput. Phys. Commun. 145, 311-340 (2002).
-
 ## License
 
 [To be determined]
@@ -549,7 +536,7 @@ Jin Lei
 
 ## Acknowledgments
 
-This work was supported by [funding information].
+This work was supported by the National Natural Science Foundation of China (Grant Nos. 12475132 and 12535009) and the Fundamental Research Funds for the Central Universities.
 
 ---
 
