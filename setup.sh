@@ -44,6 +44,40 @@ ask_yes_no() {
     esac
 }
 
+# Fix NVIDIA CUDA repository GPG key issue
+fix_nvidia_gpg_key() {
+    echo "  Fixing NVIDIA CUDA repository GPG key..."
+
+    # Detect Ubuntu version
+    local ubuntu_version=$(lsb_release -rs 2>/dev/null | tr -d '.')
+    if [ -z "$ubuntu_version" ]; then
+        ubuntu_version="2004"  # Default to 20.04
+    fi
+
+    local keyring_url="https://developer.download.nvidia.com/compute/cuda/repos/ubuntu${ubuntu_version}/x86_64/cuda-keyring_1.1-1_all.deb"
+    local keyring_file="/tmp/cuda-keyring.deb"
+
+    if wget -q -O "$keyring_file" "$keyring_url" 2>/dev/null; then
+        sudo dpkg -i "$keyring_file" 2>/dev/null || true
+        rm -f "$keyring_file"
+        echo "  NVIDIA GPG key updated"
+        return 0
+    else
+        echo "  WARNING: Could not download NVIDIA keyring, trying alternative fix..."
+        # Alternative: temporarily disable NVIDIA repos
+        sudo mv /etc/apt/sources.list.d/cuda*.list /tmp/ 2>/dev/null || true
+        return 1
+    fi
+}
+
+# Restore NVIDIA repos if they were moved
+restore_nvidia_repos() {
+    if ls /tmp/cuda*.list 1>/dev/null 2>&1; then
+        sudo mv /tmp/cuda*.list /etc/apt/sources.list.d/ 2>/dev/null || true
+        echo "  NVIDIA repos restored"
+    fi
+}
+
 version_ge() {
     # Returns 0 if $1 >= $2
     [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
@@ -303,6 +337,8 @@ else
     # Linux
     OPENBLAS_FOUND="false"
     OPENBLAS_PATHS=(
+        "/opt/homebrew/opt/openblas"
+        "/usr/local/opt/openblas"
         "/usr/lib/x86_64-linux-gnu/openblas-openmp"
         "/usr/lib/x86_64-linux-gnu/openblas-pthread"
         "/usr/lib/x86_64-linux-gnu"
@@ -310,12 +346,26 @@ else
         "/usr/lib64/openblas-pthread"
         "/usr/lib64"
         "/usr/local/lib"
+        "/usr/local"
+        "/usr"
         "/opt/openblas/lib"
     )
 
     for OPATH in "${OPENBLAS_PATHS[@]}"; do
-        if [ -f "$OPATH/libopenblas.so" ] || [ -f "$OPATH/libopenblas.a" ]; then
-            BLAS_LIBS="-L$OPATH -lopenblas"
+        # Check multiple possible locations within each path
+        if [ -f "$OPATH/lib/libopenblas.dylib" ] || \
+           [ -f "$OPATH/lib/libopenblas.so" ] || \
+           [ -f "$OPATH/lib64/libopenblas.so" ] || \
+           [ -f "$OPATH/libopenblas.so" ] || \
+           [ -f "$OPATH/libopenblas.a" ]; then
+            # Determine the actual library path
+            if [ -f "$OPATH/lib/libopenblas.so" ] || [ -f "$OPATH/lib/libopenblas.dylib" ]; then
+                BLAS_LIBS="-L$OPATH/lib -lopenblas"
+            elif [ -f "$OPATH/lib64/libopenblas.so" ]; then
+                BLAS_LIBS="-L$OPATH/lib64 -lopenblas"
+            else
+                BLAS_LIBS="-L$OPATH -lopenblas"
+            fi
             echo "  OpenBLAS found: $OPATH"
             OPENBLAS_FOUND="true"
             break
@@ -324,40 +374,63 @@ else
 
     if [ "$OPENBLAS_FOUND" = "false" ]; then
         # Try ldconfig
-        OPENBLAS_LIB=$(ldconfig -p 2>/dev/null | grep libopenblas | head -1 | awk '{print $NF}')
-        if [ -n "$OPENBLAS_LIB" ]; then
-            OPENBLAS_DIR=$(dirname "$OPENBLAS_LIB")
-            BLAS_LIBS="-L$OPENBLAS_DIR -lopenblas"
-            echo "  OpenBLAS found via ldconfig: $OPENBLAS_DIR"
-            OPENBLAS_FOUND="true"
+        if command -v ldconfig &> /dev/null; then
+            if ldconfig -p 2>/dev/null | grep -q libopenblas; then
+                OPENBLAS_LIB=$(ldconfig -p 2>/dev/null | grep "libopenblas.so " | head -1 | awk '{print $NF}')
+                if [ -n "$OPENBLAS_LIB" ]; then
+                    OPENBLAS_DIR=$(dirname "$OPENBLAS_LIB")
+                    BLAS_LIBS="-L$OPENBLAS_DIR -lopenblas"
+                    echo "  OpenBLAS found via ldconfig: $OPENBLAS_DIR"
+                    OPENBLAS_FOUND="true"
+                fi
+            fi
         fi
     fi
 
     if [ "$OPENBLAS_FOUND" = "false" ]; then
-        echo "  OpenBLAS not found"
-        if ask_yes_no "  Would you like to install OpenBLAS?"; then
-            if command -v apt &> /dev/null; then
-                sudo apt update && sudo apt install -y libopenblas-openmp-dev
-            elif command -v yum &> /dev/null; then
-                sudo yum install -y openblas-devel
-            elif command -v dnf &> /dev/null; then
-                sudo dnf install -y openblas-devel
-            fi
-
-            # Search again
-            for OPATH in "${OPENBLAS_PATHS[@]}"; do
-                if [ -f "$OPATH/libopenblas.so" ]; then
-                    BLAS_LIBS="-L$OPATH -lopenblas"
-                    echo "  OpenBLAS installed: $OPATH"
-                    OPENBLAS_FOUND="true"
-                    break
-                fi
-            done
+        # Standard BLAS/LAPACK is orders of magnitude slower - do NOT use as fallback
+        if ldconfig -p 2>/dev/null | grep -q "libblas\|liblapack"; then
+            echo "  WARNING: Standard BLAS/LAPACK found but is too slow - will install OpenBLAS"
+        else
+            echo "  OpenBLAS not found"
         fi
 
+        echo "  Installing OpenBLAS (required for performance)..."
+        if command -v apt &> /dev/null; then
+            # Handle potential NVIDIA GPG key issues
+            if ! sudo apt-get update 2>&1 | tee /tmp/apt_update.log | grep -q "NO_PUBKEY\|is no longer signed"; then
+                :  # Success
+            else
+                if grep -q "A4B469963BF863CC\|cuda\|nvidia" /tmp/apt_update.log 2>/dev/null; then
+                    echo "  WARNING: NVIDIA CUDA repository GPG key issue detected"
+                    fix_nvidia_gpg_key
+                    sudo apt-get update || echo "  WARNING: apt-get update still failing, continuing anyway..."
+                fi
+            fi
+            rm -f /tmp/apt_update.log
+            sudo apt-get install -y libopenblas-openmp-dev || sudo apt-get install -y libopenblas-dev
+            restore_nvidia_repos
+        elif command -v yum &> /dev/null; then
+            sudo yum install -y openblas-devel
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y openblas-devel
+        fi
+
+        # Search again
+        for OPATH in "${OPENBLAS_PATHS[@]}"; do
+            if [ -f "$OPATH/libopenblas.so" ]; then
+                BLAS_LIBS="-L$OPATH -lopenblas"
+                echo "  OpenBLAS installed: $OPATH"
+                OPENBLAS_FOUND="true"
+                break
+            fi
+        done
+
         if [ "$OPENBLAS_FOUND" = "false" ]; then
-            BLAS_LIBS="-llapack -lblas"
-            echo "  WARNING: Using system LAPACK/BLAS (slower)"
+            echo "  ERROR: Failed to install OpenBLAS. Please install manually."
+            echo "         Ubuntu/Debian: sudo apt install libopenblas-openmp-dev"
+            echo "         RHEL/CentOS:   sudo yum install openblas-devel"
+            exit 1
         fi
     fi
 fi
