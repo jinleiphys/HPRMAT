@@ -320,18 +320,47 @@ echo "[4/6] Checking BLAS library..."
 BLAS_LIBS=""
 
 if [ "$OS" = "Darwin" ]; then
-    # macOS
+    # macOS - require OpenBLAS (do not use Accelerate)
+    OPENBLAS_FOUND="false"
     if [ -d "/opt/homebrew/opt/openblas" ]; then
         OPENBLAS_DIR="/opt/homebrew/opt/openblas"
         BLAS_LIBS="-L${OPENBLAS_DIR}/lib -lopenblas"
         echo "  OpenBLAS found: $OPENBLAS_DIR"
+        OPENBLAS_FOUND="true"
     elif [ -d "/usr/local/opt/openblas" ]; then
         OPENBLAS_DIR="/usr/local/opt/openblas"
         BLAS_LIBS="-L${OPENBLAS_DIR}/lib -lopenblas"
         echo "  OpenBLAS found: $OPENBLAS_DIR"
-    else
-        BLAS_LIBS="-framework Accelerate"
-        echo "  Using Apple Accelerate framework"
+        OPENBLAS_FOUND="true"
+    fi
+
+    if [ "$OPENBLAS_FOUND" = "false" ]; then
+        echo "  OpenBLAS not found. Installing via Homebrew..."
+        if command -v brew &> /dev/null; then
+            brew install openblas
+            # Check again after installation
+            if [ -d "/opt/homebrew/opt/openblas" ]; then
+                OPENBLAS_DIR="/opt/homebrew/opt/openblas"
+            elif [ -d "/usr/local/opt/openblas" ]; then
+                OPENBLAS_DIR="/usr/local/opt/openblas"
+            fi
+            if [ -n "$OPENBLAS_DIR" ]; then
+                BLAS_LIBS="-L${OPENBLAS_DIR}/lib -lopenblas"
+                echo "  OpenBLAS installed: $OPENBLAS_DIR"
+                OPENBLAS_FOUND="true"
+            fi
+        else
+            echo "  ERROR: Homebrew not found. Please install Homebrew first:"
+            echo "         /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+            echo "         Then run: brew install openblas"
+            exit 1
+        fi
+
+        if [ "$OPENBLAS_FOUND" = "false" ]; then
+            echo "  ERROR: Failed to install OpenBLAS. Please install manually:"
+            echo "         brew install openblas"
+            exit 1
+        fi
     fi
 else
     # Linux
