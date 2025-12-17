@@ -347,7 +347,9 @@ subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
   end do
 
   ! Solve for collision matrix using linear solve instead of inversion
-  call ZGESV(nopen, nopen, cz, nch, IPIV_local, cu(1:nopen, 1:nopen), nch, INFO_local)
+  ! Note: Pass full cu matrix with LDB=ndim to avoid Fortran creating
+  ! a temporary copy with wrong leading dimension
+  call ZGESV(nopen, nopen, cz, nch, IPIV_local, cu, ndim, INFO_local)
   if (INFO_local /= 0) stop 'Error in ZGESV for collision matrix'
 
   ! Wave function calculation
