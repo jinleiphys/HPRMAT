@@ -30,6 +30,7 @@ module gpu_solver_interface
   public :: gpu_multi_finalize
   public :: gpu_solve_multi
   public :: gpu_solve_auto
+  public :: gpu_host_unregister
 
   ! Module state
   logical, save :: gpu_initialized = .false.
@@ -45,6 +46,12 @@ module gpu_solver_interface
 
      ! Finalize GPU solver
      integer(c_int) function gpu_solver_finalize_c() bind(C, name="gpu_solver_finalize_")
+       use iso_c_binding
+     end function
+
+     ! Release the cached pinned host-matrix registration (call before freeing the host
+     ! matrix buffer on a size change; does not tear down the GPU context)
+     integer(c_int) function gpu_host_unregister_c() bind(C, name="gpu_host_unregister_")
        use iso_c_binding
      end function
 
@@ -178,6 +185,14 @@ contains
     ierr = c_ierr
     gpu_initialized = .false.
   end subroutine gpu_solver_finalize
+
+  ! Release the cached pinned host-matrix registration. Safe to call unconditionally;
+  ! it is a no-op if nothing is currently registered.
+  subroutine gpu_host_unregister()
+    implicit none
+    integer(c_int) :: c_ret
+    c_ret = gpu_host_unregister_c()
+  end subroutine gpu_host_unregister
 
   !---------------------------------------------------------
   ! Solve using mixed precision (FP32 LU + refinement)

@@ -493,7 +493,7 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   complex(dp), intent(in) :: cmat(nch*nlag, nch*nlag), B_vector(nlag)
   complex(dp), intent(out) :: Rmat(nch, nch)
 
-  complex(dp), allocatable :: A_copy(:,:), X_vector(:,:)
+  complex(dp), allocatable, save :: A_copy(:,:), X_vector(:,:)
   integer :: ich, ichp, ir, info, ntotal
   integer :: max_refine
   real(dp) :: tol
@@ -502,8 +502,22 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   max_refine = 0      ! Disable iterative refinement (fast enough without)
   tol = 1.0d-10
 
-  allocate(A_copy(ntotal, ntotal))
-  allocate(X_vector(ntotal, nch))
+  ! Persistent work buffers: reallocate only when the problem size changes, so the host
+  ! matrix keeps a stable address across an energy scan. This lets the GPU backend
+  ! page-lock (pin) the matrix once and reuse the pinned region for every solve.
+  if (.not. allocated(A_copy)) then
+    allocate(A_copy(ntotal, ntotal))
+    allocate(X_vector(ntotal, nch))
+  else if (size(A_copy,1) /= ntotal .or. size(X_vector,2) /= nch) then
+#ifdef GPU_ENABLED
+    ! The GPU backend may hold a pinned registration on the current A_copy; release it
+    ! before the buffer is freed, so it is never unregistered after deallocation.
+    call gpu_host_unregister()
+#endif
+    deallocate(A_copy, X_vector)
+    allocate(A_copy(ntotal, ntotal))
+    allocate(X_vector(ntotal, nch))
+  end if
 
   ! Copy matrix
   A_copy = cmat
@@ -556,7 +570,8 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
     Rmat = Rmat * normfac
   end if
 
-  deallocate(A_copy, X_vector)
+  ! A_copy / X_vector are persistent (saved, see allocation above): not deallocated, so
+  ! the GPU backend can keep the host matrix pinned and reuse it across energy points.
 
 end subroutine solve_rmatrix_gpu
 

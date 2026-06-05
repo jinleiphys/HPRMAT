@@ -81,6 +81,22 @@ program benchmark_large
   ! Get clock rate for wall time measurement
   call system_clock(count_rate=clock_rate)
 
+  ! Warm up the (global) BLAS thread pool once, so every timed solve below is measured
+  ! in steady state. This keeps the CPU methods and the GPU solver on an equal footing:
+  ! the one-time thread-pool spin-up is not charged to whichever method runs first.
+  block
+    complex(dp), allocatable :: ww(:,:)
+    integer, allocatable :: wp(:)
+    integer :: winfo
+    allocate(ww(512,512), wp(512))
+    ww = cmplx(1.0_dp, 0.0_dp, dp)
+    do i = 1, 512
+      ww(i,i) = cmplx(1024.0_dp, 0.0_dp, dp)
+    end do
+    call ZGETRF(512, 512, ww, 512, wp, winfo)
+    deallocate(ww, wp)
+  end block
+
   !---------------------------------------------------------------------------
   ! Pierre's method: Matrix inversion (ZGETRF + ZGETRI)
   ! Then multiply: X = C^{-1} * B_columns, then extract R
@@ -162,7 +178,11 @@ program benchmark_large
 #ifdef GPU_ENABLED
   !---------------------------------------------------------------------------
   ! Type 4: GPU cuSOLVER
+  ! One untimed warmup solve pays the one-time GPU context creation, device
+  ! allocation, and host-matrix page-locking, so the timed loop reports the
+  ! steady-state per-solve cost relevant to an energy scan (persistent buffers).
   !---------------------------------------------------------------------------
+  call solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type=4)
   call system_clock(t1)
   do irep = 1, nrep
     call solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type=4)

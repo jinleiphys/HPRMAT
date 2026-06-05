@@ -92,6 +92,13 @@ static size_t work_size = 0;
 static int alloc_n = 0;
 static int alloc_nrhs = 0;
 
+// Cached host-matrix pinned registration. The caller's matrix buffer is page-locked
+// once and kept registered across solves; in an energy scan the same buffer is reused,
+// so the page-locking cost is amortized and every transfer uses direct DMA. Freed in
+// gpu_solver_finalize_ or when the buffer address/size changes.
+static void *h_A_pinned = NULL;
+static size_t h_A_pinned_bytes = 0;
+
 // ============================================
 // CUDA Kernels for FP64 <-> FP32 conversion
 // ============================================
@@ -196,6 +203,8 @@ int gpu_solver_finalize_() {
     d_work = NULL;
     alloc_n = alloc_nrhs = 0;
 
+    if (h_A_pinned) { cudaHostUnregister(h_A_pinned); h_A_pinned = NULL; h_A_pinned_bytes = 0; }
+
     if (cusolver_handle) cusolverDnDestroy(cusolver_handle);
     if (cublas_handle) cublasDestroy(cublas_handle);
 
@@ -203,6 +212,19 @@ int gpu_solver_finalize_() {
     cublas_handle = NULL;
     gpu_initialized = 0;
 
+    return 0;
+}
+
+// Release the cached pinned host-matrix registration without tearing down the GPU
+// context. The host code must call this while the registered buffer is still allocated
+// (e.g. before freeing/reallocating it on a problem-size change), otherwise the cached
+// pointer would later be unregistered after it has been freed.
+int gpu_host_unregister_() {
+    if (h_A_pinned) {
+        cudaHostUnregister(h_A_pinned);
+        h_A_pinned = NULL;
+        h_A_pinned_bytes = 0;
+    }
     return 0;
 }
 
@@ -280,10 +302,24 @@ int gpu_solve_mixed_(
     cuDoubleComplex *h_A_dp = (cuDoubleComplex*)h_A;
     cuDoubleComplex *h_B_dp = (cuDoubleComplex*)h_B;
 
+    // Pin the (large) host matrix so its H2D copy uses direct DMA rather than a staged
+    // pageable transfer (roughly doubles effective PCIe bandwidth at N~25k). The
+    // registration is cached: in a production energy scan the caller reuses the same
+    // buffer, so the (non-trivial) page-locking cost is paid only on the first solve and
+    // every subsequent transfer is fast. Re-register if the buffer address or size
+    // changes; if registration fails, fall back to a plain pageable copy.
+    size_t A_bytes = (size_t)n * n * sizeof(cuDoubleComplex);
+    if (h_A_pinned != (void*)h_A_dp || h_A_pinned_bytes != A_bytes) {
+        if (h_A_pinned) { cudaHostUnregister(h_A_pinned); h_A_pinned = NULL; }
+        if (cudaHostRegister(h_A_dp, A_bytes, cudaHostRegisterDefault) == cudaSuccess) {
+            h_A_pinned = (void*)h_A_dp;
+            h_A_pinned_bytes = A_bytes;
+        }
+    }
+
     // Copy FP64 data to GPU
-    CUDA_CHECK(cudaMemcpy(d_A_dp, h_A_dp, n * n * sizeof(cuDoubleComplex),
-                          cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_B_dp, h_B_dp, n * nrhs * sizeof(cuDoubleComplex),
+    CUDA_CHECK(cudaMemcpy(d_A_dp, h_A_dp, A_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_B_dp, h_B_dp, (size_t)n * nrhs * sizeof(cuDoubleComplex),
                           cudaMemcpyHostToDevice));
 
     // Convert FP64 -> FP32 on GPU (fast!)
