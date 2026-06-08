@@ -484,10 +484,11 @@ end subroutine solve_rmatrix_woodbury
 ! if GPU is not available or if compilation was done without GPU support.
 !
 ! Features:
-! - Automatic single/multi-GPU selection based on matrix size and GPU count
 ! - Single GPU: Mixed precision (FP32 LU + FP64 refinement) for speed
-! - Multi-GPU: Full double precision with data distributed across GPUs
 ! - Transparent fallback to CPU if GPU unavailable
+! Note: an experimental cusolverMg multi-GPU routine (gpu_solve_multi) is present in the
+!   source but is NOT auto-selected (its dispatch is compiled out); every GPU solve runs
+!   on a single device. One 24-48 GB card covers the production range (N up to ~30000).
 !
 ! Typically ~3-18x faster than CPU for large matrices (n > 1000).
 !------------------------------------------------------------------------------
@@ -515,9 +516,9 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, max_refin
   if (present(max_refine_in)) max_refine = max_refine_in
   tol = 1.0d-10
 
-  ! Persistent work buffers: reallocate only when the problem size changes, so the host
-  ! matrix keeps a stable address across an energy scan. This lets the GPU backend
-  ! page-lock (pin) the matrix once and reuse the pinned region for every solve.
+  ! Persistent library work buffers (A_copy for the CPU fallback, X_vector for the RHS
+  ! and the solution): reallocated only when the problem size changes. The GPU host-matrix
+  ! pinning is on the caller's cmat (see the contract below), not on these buffers.
   if (.not. allocated(A_copy)) then
     allocate(A_copy(ntotal, ntotal))
     allocate(X_vector(ntotal, nch))
@@ -532,8 +533,22 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, max_refin
     allocate(X_vector(ntotal, nch))
   end if
 
-  ! Copy matrix
-  A_copy = cmat
+  ! GPU path: the caller's matrix is passed to the device solver directly. cmat is
+  ! intent(in); the GPU holds its own working copy and never writes back to the host
+  ! matrix, so the large host-side defensive copy is avoided. For fast (pinned,
+  ! direct-DMA) host-to-device transfer the device solver page-locks the caller's matrix
+  ! buffer and caches that registration across solves.
+  !
+  ! >>> BUFFER-LIFETIME CONTRACT <<<
+  ! Because the cached page-locking refers to the caller's buffer, the caller MUST keep
+  ! the matrix buffer allocated between successive GPU solves, and MUST call
+  ! gpu_host_unregister() (or the full teardown gpu_solver_finalize()) before freeing or
+  ! reallocating it. The standard energy-scan usage, which reuses one persistent matrix
+  ! buffer across all energies, satisfies this automatically. Violating it (e.g. freeing
+  ! the matrix inside the energy loop and allocating a fresh one each step) leaves a cached
+  ! registration on freed memory; in that usage pattern, request the CPU solvers or call
+  ! gpu_host_unregister() between reallocations. (A writable copy into the library-owned
+  ! A_copy is made only in the CPU fallback below, where ZGESV overwrites in place.)
 
   ! Set up RHS
   X_vector = (0.0_dp, 0.0_dp)
@@ -547,11 +562,11 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, max_refin
   if (max_refine > 0) then
     ! Hybrid mode: GPU FP32 factorization + host FP64 residual refinement (recovers
     ! full double precision). Avoids the throttled FP64 path on consumer GPUs.
-    call gpu_solve_hybrid(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
+    call gpu_solve_hybrid(cmat, X_vector, ntotal, nch, max_refine, tol, info)
   else
-    ! Single-precision GPU solver - automatically chooses single or multi-GPU
-    ! based on matrix size and number of available GPUs.
-    call gpu_solve_auto(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
+    ! Single-precision GPU solver. gpu_solve_auto runs the single-GPU mixed-precision
+    ! path; the cusolverMg multi-GPU branch inside it is present but compiled out.
+    call gpu_solve_auto(cmat, X_vector, ntotal, nch, max_refine, tol, info)
   end if
 
   if (info /= 0) then
@@ -589,8 +604,8 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, max_refin
     Rmat = Rmat * normfac
   end if
 
-  ! A_copy / X_vector are persistent (saved, see allocation above): not deallocated, so
-  ! the GPU backend can keep the host matrix pinned and reuse it across energy points.
+  ! A_copy / X_vector are persistent (saved): reused across calls. The GPU backend pins
+  ! the caller's matrix buffer (cmat), not these, per the buffer-lifetime contract above.
 
 end subroutine solve_rmatrix_gpu
 

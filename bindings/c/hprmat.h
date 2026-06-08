@@ -184,6 +184,18 @@ void hprmat_version(char* version, int maxlen);
  */
 void hprmat_solver_info(int solver, char* info, int maxlen);
 
+/*
+ * Release the cached GPU host-matrix pinned registration.
+ *
+ * GPU buffer-lifetime contract: when using the GPU solver (solver type 4), the
+ * matrix buffer passed to the solver is page-locked and that registration is
+ * cached across solves for fast direct-DMA transfer. The caller MUST call this
+ * before freeing or reallocating that buffer. Reusing one persistent matrix
+ * buffer across an energy scan needs only a single call at teardown. No-op when
+ * the library is built without GPU support.
+ */
+void hprmat_gpu_finalize(void);
+
 #ifdef __cplusplus
 }
 #endif

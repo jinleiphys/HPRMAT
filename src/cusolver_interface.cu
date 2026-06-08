@@ -322,6 +322,7 @@ int gpu_solve_mixed_(
     double tol = *tol_ptr;
     int h_info;
 
+
     if (!gpu_initialized) {
         int device = 0;
         if (gpu_solver_init_(&device) != 0) {
@@ -439,6 +440,8 @@ int gpu_solve_mixed_(
 // is transferred once. This recovers FP64 accuracy while keeping the GPU factorization
 // advantage.
 // ============================================
+
+
 int gpu_solve_hybrid_(
     double *h_A,
     double *h_B,

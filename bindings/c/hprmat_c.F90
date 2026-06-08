@@ -320,4 +320,21 @@ contains
 
   end subroutine hprmat_solver_info
 
+  !----------------------------------------------------------------------------
+  ! hprmat_gpu_finalize: Release the cached GPU host-matrix pinned registration.
+  ! GPU buffer-lifetime contract: a C caller of the GPU solver (solver type 4)
+  ! MUST call this before freeing or reallocating the matrix buffer it passed to
+  ! the solver, because that buffer is page-locked and the registration is cached
+  ! across solves. Reusing one persistent matrix buffer across an energy scan
+  ! satisfies the contract without any explicit call until teardown. No-op when
+  ! the library is built without GPU support.
+  !   void hprmat_gpu_finalize(void);
+  !----------------------------------------------------------------------------
+  subroutine hprmat_gpu_finalize() bind(C, name='hprmat_gpu_finalize')
+#ifdef GPU_ENABLED
+    use gpu_solver_interface, only: gpu_host_unregister
+    call gpu_host_unregister()
+#endif
+  end subroutine hprmat_gpu_finalize
+
 end module hprmat_c_interface
