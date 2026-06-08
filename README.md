@@ -192,12 +192,23 @@ solver_type = 4   ! GPU cuSOLVER (FP32) - fastest with NVIDIA GPU
 solver_type = 5   ! GPU TF32 - Tensor Core acceleration (Ampere+ GPUs)
 ```
 
+The GPU solver (`solver_type = 4`) runs in single precision by default. To recover full
+double-precision accuracy on a consumer GPU, pass `max_refine > 0` to enable the
+host-refined hybrid mode (FP32 factorization on the GPU, FP64 residual refinement on the
+host, where double precision is not throttled):
+
+```fortran
+call solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, &
+                   solver_type=4, max_refine=2)   ! GPU hybrid: FP32 factor + host FP64 refine
+```
+
 ### Recommended Configuration
 
 | Environment | Recommended Solver |
 |-------------|-------------------|
 | CPU only (no GPU) | `solver_type = 3` (Woodbury-Kinetic) |
-| NVIDIA GPU (any) | `solver_type = 4` (GPU cuSOLVER) |
+| NVIDIA GPU (any) | `solver_type = 4` (GPU cuSOLVER, FP32) |
+| NVIDIA GPU, full double precision | `solver_type = 4, max_refine = 2` (host-refined hybrid) |
 | NVIDIA Ampere+ GPU (RTX 30/40) | `solver_type = 5` (GPU TF32) |
 | Debugging/validation | `solver_type = 1` (Dense LAPACK) |
 

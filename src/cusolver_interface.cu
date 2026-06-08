@@ -25,6 +25,18 @@
 #include <cublas_v2.h>
 #include <cuComplex.h>
 
+// Host Fortran BLAS ZGEMM (OpenBLAS, already linked and used by the CPU solvers) for the
+// hybrid solver's high-precision residual. Using the Fortran symbol zgemm_ rather than
+// cblas_zgemm guarantees the symbol is present even if OpenBLAS was built without the
+// CBLAS layer. The two trailing size_t arguments are the gfortran hidden character-length
+// arguments for the 'N'/'N' transpose flags.
+extern "C" void zgemm_(const char *transa, const char *transb,
+                       const int *m, const int *n, const int *k,
+                       const void *alpha, const void *A, const int *lda,
+                       const void *B, const int *ldb,
+                       const void *beta, void *C, const int *ldc,
+                       size_t transa_len, size_t transb_len);
+
 // Error checking macros
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
@@ -91,6 +103,13 @@ static void *d_work = NULL;
 static size_t work_size = 0;
 static int alloc_n = 0;
 static int alloc_nrhs = 0;
+
+// Persistent host scratch for the hybrid solver: the current solution (h_X) and the
+// high-precision residual (h_R), both N x nrhs FP64. Reused across solves and freed in
+// gpu_solver_finalize_; reallocated only when the size changes.
+static cuDoubleComplex *h_X_hybrid = NULL;
+static cuDoubleComplex *h_R_hybrid = NULL;
+static size_t hybrid_host_elems = 0;
 
 // Cached host-matrix pinned registration. The caller's matrix buffer is page-locked
 // once and kept registered across solves; in an energy scan the same buffer is reused,
@@ -176,7 +195,13 @@ int gpu_solver_init_(int *device_id) {
            prop.name, prop.totalGlobalMem / 1e9);
 
     CUSOLVER_CHECK(cusolverDnCreate(&cusolver_handle));
-    CUBLAS_CHECK(cublasCreate(&cublas_handle));
+    if (cublasCreate(&cublas_handle) != CUBLAS_STATUS_SUCCESS) {
+        // Do not leak the cuSOLVER handle if the cuBLAS handle cannot be created.
+        fprintf(stderr, "cuBLAS error at %s:%d: cublasCreate failed\n", __FILE__, __LINE__);
+        cusolverDnDestroy(cusolver_handle);
+        cusolver_handle = NULL;
+        return -1;
+    }
 
     gpu_initialized = 1;
     return 0;
@@ -204,6 +229,10 @@ int gpu_solver_finalize_() {
     alloc_n = alloc_nrhs = 0;
 
     if (h_A_pinned) { cudaHostUnregister(h_A_pinned); h_A_pinned = NULL; h_A_pinned_bytes = 0; }
+
+    if (h_X_hybrid) { free(h_X_hybrid); h_X_hybrid = NULL; }
+    if (h_R_hybrid) { free(h_R_hybrid); h_R_hybrid = NULL; }
+    hybrid_host_elems = 0;
 
     if (cusolver_handle) cusolverDnDestroy(cusolver_handle);
     if (cublas_handle) cublasDestroy(cublas_handle);
@@ -233,16 +262,23 @@ static int ensure_gpu_memory(int n, int nrhs) {
         return 0;
     }
 
-    // Free old allocations
-    if (d_A_sp) cudaFree(d_A_sp);
-    if (d_B_sp) cudaFree(d_B_sp);
-    if (d_A_dp) cudaFree(d_A_dp);
-    if (d_B_dp) cudaFree(d_B_dp);
-    if (d_R) cudaFree(d_R);
-    if (d_X) cudaFree(d_X);
-    if (d_ipiv) cudaFree(d_ipiv);
-    if (d_info) cudaFree(d_info);
-    if (d_work) cudaFree(d_work);
+    // Free old allocations. Null each pointer immediately and reset the size counters
+    // BEFORE reallocating, so that if any cudaMalloc below fails (CUDA_CHECK returns
+    // early) no global is left holding a freed address. Every pointer is then either NULL
+    // (safe to skip in finalize and to re-free on the next call) or a valid current
+    // allocation, never a dangling freed address; alloc_n = 0 forces a clean retry.
+    if (d_A_sp) { cudaFree(d_A_sp); d_A_sp = NULL; }
+    if (d_B_sp) { cudaFree(d_B_sp); d_B_sp = NULL; }
+    if (d_A_dp) { cudaFree(d_A_dp); d_A_dp = NULL; }
+    if (d_B_dp) { cudaFree(d_B_dp); d_B_dp = NULL; }
+    if (d_R) { cudaFree(d_R); d_R = NULL; }
+    if (d_X) { cudaFree(d_X); d_X = NULL; }
+    if (d_ipiv) { cudaFree(d_ipiv); d_ipiv = NULL; }
+    if (d_info) { cudaFree(d_info); d_info = NULL; }
+    if (d_work) { cudaFree(d_work); d_work = NULL; }
+    alloc_n = 0;
+    alloc_nrhs = 0;
+    work_size = 0;
 
     // Allocate new memory
     CUDA_CHECK(cudaMalloc(&d_A_sp, n * n * sizeof(cuComplex)));
@@ -388,6 +424,153 @@ int gpu_solve_mixed_(
 
     // Copy solution back to host
     CUDA_CHECK(cudaMemcpy(h_B_dp, d_X, n * nrhs * sizeof(cuDoubleComplex),
+                          cudaMemcpyDeviceToHost));
+
+    *info_ptr = 0;
+    return 0;
+}
+
+// ============================================
+// Hybrid Mixed-Precision Solver
+// FP32 LU factorization on the GPU; the high-precision (FP64) residual of each
+// iterative-refinement step is formed on the HOST, where double precision runs at full
+// rate, instead of on the GPU, where consumer-card FP64 is throttled (typically 1:64).
+// Only the N x nrhs residual and correction vectors cross PCIe per step; the N x N matrix
+// is transferred once. This recovers FP64 accuracy while keeping the GPU factorization
+// advantage.
+// ============================================
+int gpu_solve_hybrid_(
+    double *h_A,
+    double *h_B,
+    int *n_ptr,
+    int *nrhs_ptr,
+    int *max_refine_ptr,
+    double *tol_ptr,
+    int *info_ptr
+) {
+    int n = *n_ptr;
+    int nrhs = *nrhs_ptr;
+    int max_refine = *max_refine_ptr;
+    double tol = *tol_ptr;
+    int h_info;
+
+    if (!gpu_initialized) {
+        int device = 0;
+        if (gpu_solver_init_(&device) != 0) {
+            *info_ptr = -1;
+            return -1;
+        }
+    }
+
+    if (ensure_gpu_memory(n, nrhs) != 0) {
+        *info_ptr = -2;
+        return -1;
+    }
+
+    // Persistent host scratch (solution and residual), reallocated only on size change.
+    size_t nelem = (size_t)n * nrhs;
+    if (h_X_hybrid == NULL || hybrid_host_elems != nelem) {
+        if (h_X_hybrid) { free(h_X_hybrid); h_X_hybrid = NULL; }
+        if (h_R_hybrid) { free(h_R_hybrid); h_R_hybrid = NULL; }
+        h_X_hybrid = (cuDoubleComplex*)malloc(nelem * sizeof(cuDoubleComplex));
+        h_R_hybrid = (cuDoubleComplex*)malloc(nelem * sizeof(cuDoubleComplex));
+        if (h_X_hybrid == NULL || h_R_hybrid == NULL) {
+            if (h_X_hybrid) { free(h_X_hybrid); h_X_hybrid = NULL; }
+            if (h_R_hybrid) { free(h_R_hybrid); h_R_hybrid = NULL; }
+            hybrid_host_elems = 0;
+            *info_ptr = -2;
+            return -1;
+        }
+        hybrid_host_elems = nelem;
+    }
+
+    cuDoubleComplex *h_A_dp = (cuDoubleComplex*)h_A;
+    cuDoubleComplex *h_B_dp = (cuDoubleComplex*)h_B;
+
+    // NOTE: unlike gpu_solve_mixed_, the hybrid path does NOT page-lock the host matrix.
+    // The host computes the FP64 residual by streaming the full matrix, and CPU GEMM over
+    // a cudaHostRegister'd (pinned) buffer is several times slower than over pageable
+    // memory. Since the residual dominates the hybrid cost, leaving the matrix pageable
+    // (slightly slower one-time H2D transfer, much faster residual) is the right tradeoff.
+    size_t A_bytes = (size_t)n * n * sizeof(cuDoubleComplex);
+    if (h_A_pinned == (void*)h_A_dp) {
+        // The matrix was pinned by a previous mixed-precision solve; release it so the
+        // host residual runs at full speed.
+        cudaHostUnregister(h_A_pinned);
+        h_A_pinned = NULL;
+        h_A_pinned_bytes = 0;
+    }
+
+    // Transfer the matrix and RHS, factor in FP32, and form the initial FP32 solution.
+    CUDA_CHECK(cudaMemcpy(d_A_dp, h_A_dp, A_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_B_dp, h_B_dp, nelem * sizeof(cuDoubleComplex),
+                          cudaMemcpyHostToDevice));
+
+    int blockSize = 256;
+    int numBlocks_A = (n * n + blockSize - 1) / blockSize;
+    int numBlocks_B = (n * nrhs + blockSize - 1) / blockSize;
+
+    convert_z2c_kernel<<<numBlocks_A, blockSize>>>(d_A_dp, d_A_sp, n * n);
+    convert_z2c_kernel<<<numBlocks_B, blockSize>>>(d_B_dp, d_B_sp, n * nrhs);
+    CUDA_CHECK(cudaGetLastError());
+
+    CUSOLVER_CHECK(cusolverDnCgetrf(cusolver_handle, n, n, d_A_sp, n,
+                                     (cuComplex*)d_work, d_ipiv, d_info));
+    CUDA_CHECK(cudaMemcpy(&h_info, d_info, sizeof(int), cudaMemcpyDeviceToHost));
+    if (h_info != 0) {
+        fprintf(stderr, "CGETRF failed with info = %d\n", h_info);
+        *info_ptr = h_info;
+        return -1;
+    }
+
+    CUSOLVER_CHECK(cusolverDnCgetrs(cusolver_handle, CUBLAS_OP_N, n, nrhs,
+                                     d_A_sp, n, d_ipiv, d_B_sp, n, d_info));
+    convert_c2z_kernel<<<numBlocks_B, blockSize>>>(d_B_sp, d_X, n * nrhs);
+    CUDA_CHECK(cudaGetLastError());
+
+    // Iterative refinement with the high-precision residual formed on the host.
+    if (max_refine > 0) {
+        cuDoubleComplex c_neg1 = make_cuDoubleComplex(-1.0, 0.0);
+        cuDoubleComplex c_pos1 = make_cuDoubleComplex( 1.0, 0.0);
+
+        for (int iter = 0; iter < max_refine; iter++) {
+            // Bring the current solution to the host.
+            CUDA_CHECK(cudaMemcpy(h_X_hybrid, d_X, nelem * sizeof(cuDoubleComplex),
+                                  cudaMemcpyDeviceToHost));
+
+            // Host FP64 residual: R = B - A*X (R starts as the original RHS, h_B).
+            // ZGEMM computes C := alpha*A*B + beta*C with alpha=-1, beta=+1, all column
+            // major (matching the Fortran/cuSOLVER layout), so R := R - A*X.
+            memcpy(h_R_hybrid, h_B_dp, nelem * sizeof(cuDoubleComplex));
+            {
+                const char tn = 'N';
+                int gm = n, gn = nrhs, gk = n, glda = n, gldb = n, gldc = n;
+                zgemm_(&tn, &tn, &gm, &gn, &gk,
+                       &c_neg1, h_A_dp, &glda, h_X_hybrid, &gldb,
+                       &c_pos1, h_R_hybrid, &gldc, (size_t)1, (size_t)1);
+            }
+
+            // Convergence check on the host (max element modulus of the residual).
+            double max_res = 0.0;
+            for (size_t k = 0; k < nelem; k++) {
+                double m = h_R_hybrid[k].x * h_R_hybrid[k].x +
+                           h_R_hybrid[k].y * h_R_hybrid[k].y;
+                if (m > max_res) max_res = m;
+            }
+            if (sqrt(max_res) < tol) break;
+
+            // Solve A*dX = R with the resident FP32 factors, then X += dX (on GPU).
+            CUDA_CHECK(cudaMemcpy(d_R, h_R_hybrid, nelem * sizeof(cuDoubleComplex),
+                                  cudaMemcpyHostToDevice));
+            convert_z2c_kernel<<<numBlocks_B, blockSize>>>(d_R, d_B_sp, n * nrhs);
+            CUSOLVER_CHECK(cusolverDnCgetrs(cusolver_handle, CUBLAS_OP_N, n, nrhs,
+                                             d_A_sp, n, d_ipiv, d_B_sp, n, d_info));
+            add_correction_kernel<<<numBlocks_B, blockSize>>>(d_X, d_B_sp, n * nrhs);
+            CUDA_CHECK(cudaGetLastError());
+        }
+    }
+
+    CUDA_CHECK(cudaMemcpy(h_B_dp, d_X, nelem * sizeof(cuDoubleComplex),
                           cudaMemcpyDeviceToHost));
 
     *info_ptr = 0;
@@ -1113,10 +1296,11 @@ int gpu_solve_auto_(
     int n = *n_ptr;
     int nrhs = *nrhs_ptr;
 
-    // Check GPU memory availability
-    // Complex double matrix: n*n*16 bytes for A, n*nrhs*16 bytes for B
-    // Need ~3x for workspace (A in single precision + workspace + solution)
-    size_t required_mem = (size_t)n * n * 16 * 3 + (size_t)n * nrhs * 16 * 2;
+    // Check GPU memory availability. The device footprint is the double-precision matrix
+    // (16 N^2 bytes) plus the single-precision working copy (8 N^2), i.e. 24 N^2 for the
+    // matrices, plus the cuSOLVER workspace and the solution/residual/RHS vectors, for a
+    // total of about 26 N^2 bytes (consistent with the memory model in the manuscript).
+    size_t required_mem = (size_t)n * n * 24 + (size_t)n * nrhs * (16 * 3 + 8);
 
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
@@ -1127,7 +1311,7 @@ int gpu_solve_auto_(
                 required_mem / 1e9, available_mem / 1e9);
         fprintf(stderr, "Consider using a smaller matrix or a GPU with more memory.\n");
         fprintf(stderr, "Maximum recommended matrix size for this GPU: %d x %d\n",
-                (int)sqrt(available_mem * 0.9 / 48.0), (int)sqrt(available_mem * 0.9 / 48.0));
+                (int)sqrt(available_mem * 0.9 / 26.0), (int)sqrt(available_mem * 0.9 / 26.0));
     }
 
     // Multi-GPU support is currently disabled due to cusolverMg API complexity

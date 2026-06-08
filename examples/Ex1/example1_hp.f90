@@ -23,18 +23,25 @@ program example1_hp
   dimension cu(nc,nc), cf(nmax,nc,nc0), nvc(nc0)
   dimension fc(500), dfc(500), gc(500), dgc(500), cfx(nc)
   logical twf
+  character(len=64) :: arg
 
   data pi/3.1415926535d0/, nvc(1)/1/
   data a1, a2, z1, z2 /208, 4, 82, 2/
 
   ! ========================================
-  ! HIGH-PERFORMANCE CONFIGURATION
+  ! SOLVER CONFIGURATION
   ! ========================================
-  ! solver_type = 1: Dense LAPACK (default)
-  ! solver_type = 1: Mixed Precision (faster)
-  ! solver_type = 1: Woodbury-Kinetic (CPU optimized)
-  ! solver_type = 1: GPU cuSOLVER (if available)
+  ! Optional command-line args: solver_type [gpu_max_refine]
+  !   solver_type    = 1 Dense LAPACK, 2 Mixed, 3 Woodbury, 4 GPU
+  !   gpu_max_refine > 0 enables the GPU host-refined hybrid mode (full double precision)
   solver_type = 1
+  gpu_max_refine = 0
+  if (command_argument_count() >= 1) then
+    call get_command_argument(1, arg); read(arg, *) solver_type
+  end if
+  if (command_argument_count() >= 2) then
+    call get_command_argument(2, arg); read(arg, *) gpu_max_refine
+  end if
 
   write(*,*) '================================================'
   write(*,*) 'HPRMAT Example 1: alpha-208Pb Optical Potential'
@@ -106,6 +113,8 @@ program example1_hp
     del = atan2(aimag(cu(1, 1)), real(cu(1, 1))) / 2
     write(*,1000) ecm, cu(1, 1)
 1000 format('E (MeV)=', f8.3, '   Collision matrix=', 2es12.4)
+    ! High-precision, machine-parseable S-matrix output (E, Re S, Im S)
+    write(*,'(A,f10.3,2(1x,es23.15))') 'SPDAT ', ecm, real(cu(1,1)), aimag(cu(1,1))
 
     ! Write wave function
     if (.not. twf) cycle

@@ -44,7 +44,7 @@ contains
 !------------------------------------------------------------------------------
 ! Unified solver interface with solver type selection
 !------------------------------------------------------------------------------
-subroutine solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type, K_pure)
+subroutine solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type, K_pure, max_refine)
   implicit none
   integer, intent(in) :: nch, nlag
   real(dp), intent(in) :: normfac
@@ -52,11 +52,17 @@ subroutine solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type, 
   complex(dp), intent(out) :: Rmat(nch, nch)
   integer, intent(in), optional :: solver_type
   real(dp), intent(in), optional :: K_pure(nlag, nlag)
+  ! Number of iterative-refinement steps for the GPU solver (Type 4). With max_refine = 0
+  ! (default) the GPU runs single precision; with max_refine > 0 it switches to the
+  ! host-refined hybrid mode, which recovers full double-precision accuracy.
+  integer, intent(in), optional :: max_refine
 
-  integer :: stype
+  integer :: stype, nrefine
 
   stype = 1  ! Default to dense LAPACK
   if (present(solver_type)) stype = solver_type
+  nrefine = 0
+  if (present(max_refine)) nrefine = max_refine
 
   select case (stype)
   case (1)
@@ -70,7 +76,7 @@ subroutine solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type, 
       call solve_rmatrix_woodbury(cmat, B_vector, nch, nlag, normfac, Rmat)
     end if
   case (4)
-    call solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
+    call solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, nrefine)
   case (5)
     call solve_rmatrix_tf32(cmat, B_vector, nch, nlag, normfac, Rmat)
   case default
@@ -198,6 +204,8 @@ subroutine solve_rmatrix_mixed(cmat, B_vector, nch, nlag, normfac, Rmat)
     end do
   end do
   b_norm = sqrt(b_norm)
+  ! Guard the relative-residual denominator: a zero RHS gives a zero solution, so avoid 0/0.
+  if (b_norm == 0.0_dp) b_norm = 1.0_dp
 
   ! Single precision LU factorization
   call CGETRF(ntotal, ntotal, cmat_sp, ntotal, IPIV, info)
@@ -483,7 +491,7 @@ end subroutine solve_rmatrix_woodbury
 !
 ! Typically ~3-18x faster than CPU for large matrices (n > 1000).
 !------------------------------------------------------------------------------
-subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
+subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, max_refine_in)
 #ifdef GPU_ENABLED
   use gpu_solver_interface
 #endif
@@ -492,6 +500,10 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   real(dp), intent(in) :: normfac
   complex(dp), intent(in) :: cmat(nch*nlag, nch*nlag), B_vector(nlag)
   complex(dp), intent(out) :: Rmat(nch, nch)
+  ! max_refine_in = 0 (default): single-precision GPU solve. max_refine_in > 0: switch to
+  ! the host-refined hybrid mode, which recovers full double-precision accuracy by forming
+  ! the FP64 residual of each refinement step on the host (where FP64 is not throttled).
+  integer, intent(in), optional :: max_refine_in
 
   complex(dp), allocatable, save :: A_copy(:,:), X_vector(:,:)
   integer :: ich, ichp, ir, info, ntotal
@@ -499,7 +511,8 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   real(dp) :: tol
 
   ntotal = nch * nlag
-  max_refine = 0      ! Disable iterative refinement (fast enough without)
+  max_refine = 0
+  if (present(max_refine_in)) max_refine = max_refine_in
   tol = 1.0d-10
 
   ! Persistent work buffers: reallocate only when the problem size changes, so the host
@@ -531,9 +544,15 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   end do
 
 #ifdef GPU_ENABLED
-  ! GPU solver - automatically chooses single or multi-GPU
-  ! based on matrix size and number of available GPUs
-  call gpu_solve_auto(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
+  if (max_refine > 0) then
+    ! Hybrid mode: GPU FP32 factorization + host FP64 residual refinement (recovers
+    ! full double precision). Avoids the throttled FP64 path on consumer GPUs.
+    call gpu_solve_hybrid(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
+  else
+    ! Single-precision GPU solver - automatically chooses single or multi-GPU
+    ! based on matrix size and number of available GPUs.
+    call gpu_solve_auto(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
+  end if
 
   if (info /= 0) then
     ! Fallback to CPU

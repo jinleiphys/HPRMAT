@@ -191,6 +191,20 @@ program benchmark_large
   elapsed = real(t2 - t1, dp) / real(clock_rate, dp) / nrep
   max_diff = maxval(abs(Rmat - Rmat_ref))
   write(*,'(A,F8.3,A,F5.1,A,E8.1,A)') '| Type 4 | ', elapsed, ' | ', t_pierre/elapsed, 'x   | ', max_diff, ' |'
+
+  !---------------------------------------------------------------------------
+  ! Type 4 hybrid mode: GPU FP32 factorization + host FP64 residual refinement,
+  ! activated by max_refine > 0. One untimed warmup solve for steady-state timing.
+  !---------------------------------------------------------------------------
+  call solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type=4, max_refine=2)
+  call system_clock(t1)
+  do irep = 1, nrep
+    call solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type=4, max_refine=2)
+  end do
+  call system_clock(t2)
+  elapsed = real(t2 - t1, dp) / real(clock_rate, dp) / nrep
+  max_diff = maxval(abs(Rmat - Rmat_ref))
+  write(*,'(A,F8.3,A,F5.1,A,E8.1,A)') '| Hybrid | ', elapsed, ' | ', t_pierre/elapsed, 'x   | ', max_diff, ' |'
 #endif
 
   write(*,*) ''

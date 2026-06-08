@@ -31,6 +31,9 @@ module rmat_hp_mod
 
   ! Solver configuration
   integer, public :: solver_type = 1  ! Default: Dense LAPACK
+  ! GPU refinement steps (solver_type = 4): 0 = single precision (default),
+  ! > 0 = host-refined hybrid mode (recovers full double precision).
+  integer, public :: gpu_max_refine = 0
 
 end module rmat_hp_mod
 
@@ -299,8 +302,8 @@ subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
       ! Woodbury-Kinetic - exploits matrix structure for O(n^2) instead of O(n^3)
       call solve_rmatrix_woodbury(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
     case (4)
-      ! GPU cuSOLVER
-      call solve_rmatrix_gpu(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
+      ! GPU cuSOLVER (FP32, or host-refined hybrid when gpu_max_refine > 0)
+      call solve_rmatrix_gpu(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local, gpu_max_refine)
     case default
       ! Default to dense LAPACK
       call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
@@ -469,42 +472,93 @@ subroutine solve_rmatrix_hp_mixed(cmat, B_vector, nch, nlag, normfac, Rmat)
   complex*16, intent(out) :: Rmat(nch, nch)
 
   integer, parameter :: sp = kind(1.0e0)
-  complex(sp), allocatable :: cmat_sp(:,:), X_sp(:,:)
-  complex*16, allocatable :: X_dp(:,:)
+  complex(sp), allocatable :: cmat_sp(:,:), work_sp(:,:)
+  complex*16, allocatable :: X_dp(:,:), B_dp(:,:), R_dp(:,:)
   integer, allocatable :: IPIV(:)
-  integer :: ich, ichp, ir, ntotal, INFO, i, j
+  integer :: ich, ichp, ir, ntotal, INFO, i, j, iter, max_iter
+  real*8 :: res_norm, b_norm, rel_res, tol
+  complex*16 :: alpha_z, beta_z
 
   ntotal = nch * nlag
-  allocate(cmat_sp(ntotal, ntotal), X_sp(ntotal, nch), X_dp(ntotal, nch), IPIV(ntotal))
+  max_iter = 2
+  tol = 1.0d-10
+  allocate(cmat_sp(ntotal, ntotal), work_sp(ntotal, nch), X_dp(ntotal, nch), &
+           B_dp(ntotal, nch), R_dp(ntotal, nch), IPIV(ntotal))
 
-  ! Convert to single precision
+  ! Convert matrix to single precision
   do j = 1, ntotal
     do i = 1, ntotal
       cmat_sp(i, j) = cmplx(real(cmat(i, j)), aimag(cmat(i, j)), sp)
     end do
   end do
 
-  X_sp = (0.0, 0.0)
+  ! Double-precision RHS matrix (for the FP64 residual of iterative refinement)
+  B_dp = (0.d0, 0.d0)
   do ich = 1, nch
     do ir = 1, nlag
-      X_sp((ich-1)*nlag + ir, ich) = cmplx(real(B_vector(ir)), aimag(B_vector(ir)), sp)
+      B_dp((ich-1)*nlag + ir, ich) = B_vector(ir)
     end do
   end do
+  b_norm = 0.d0
+  do ich = 1, nch
+    do i = 1, ntotal
+      b_norm = b_norm + abs(B_dp(i, ich))**2
+    end do
+  end do
+  b_norm = sqrt(b_norm)
+  ! Guard the relative-residual denominator: a zero RHS gives a zero solution, so avoid 0/0.
+  if (b_norm == 0.d0) b_norm = 1.d0
 
+  ! Single-precision LU factorization
   call CGETRF(ntotal, ntotal, cmat_sp, ntotal, IPIV, INFO)
   if (INFO /= 0) then
     ! Fallback to double precision
-    deallocate(cmat_sp, X_sp, X_dp, IPIV)
+    deallocate(cmat_sp, work_sp, X_dp, B_dp, R_dp, IPIV)
     call solve_rmatrix_hp(cmat, B_vector, nch, nlag, normfac, Rmat)
     return
   end if
 
-  call CGETRS('N', ntotal, nch, cmat_sp, ntotal, IPIV, X_sp, ntotal, INFO)
-
-  ! Convert back to double
+  ! Initial single-precision solve
   do ich = 1, nch
     do i = 1, ntotal
-      X_dp(i, ich) = dcmplx(real(X_sp(i, ich)), aimag(X_sp(i, ich)))
+      work_sp(i, ich) = cmplx(real(B_dp(i, ich)), aimag(B_dp(i, ich)), sp)
+    end do
+  end do
+  call CGETRS('N', ntotal, nch, cmat_sp, ntotal, IPIV, work_sp, ntotal, INFO)
+  do ich = 1, nch
+    do i = 1, ntotal
+      X_dp(i, ich) = dcmplx(real(work_sp(i, ich)), aimag(work_sp(i, ich)))
+    end do
+  end do
+
+  ! Double-precision iterative refinement: residual in FP64, correction solve with the
+  ! FP32 LU factors. This is what makes Type 2 a genuine mixed-precision solver; without
+  ! it the result stays at single-precision accuracy.
+  alpha_z = (-1.d0, 0.d0)
+  beta_z = (1.d0, 0.d0)
+  do iter = 1, max_iter
+    R_dp = B_dp
+    call ZGEMM('N', 'N', ntotal, nch, ntotal, alpha_z, cmat, ntotal, &
+               X_dp, ntotal, beta_z, R_dp, ntotal)
+    res_norm = 0.d0
+    do ich = 1, nch
+      do i = 1, ntotal
+        res_norm = res_norm + abs(R_dp(i, ich))**2
+      end do
+    end do
+    res_norm = sqrt(res_norm)
+    rel_res = res_norm / b_norm
+    if (rel_res < tol) exit
+    do ich = 1, nch
+      do i = 1, ntotal
+        work_sp(i, ich) = cmplx(real(R_dp(i, ich)), aimag(R_dp(i, ich)), sp)
+      end do
+    end do
+    call CGETRS('N', ntotal, nch, cmat_sp, ntotal, IPIV, work_sp, ntotal, INFO)
+    do ich = 1, nch
+      do i = 1, ntotal
+        X_dp(i, ich) = X_dp(i, ich) + dcmplx(real(work_sp(i, ich)), aimag(work_sp(i, ich)))
+      end do
     end do
   end do
 
@@ -518,7 +572,7 @@ subroutine solve_rmatrix_hp_mixed(cmat, B_vector, nch, nlag, normfac, Rmat)
   end do
   Rmat = Rmat * normfac
 
-  deallocate(cmat_sp, X_sp, X_dp, IPIV)
+  deallocate(cmat_sp, work_sp, X_dp, B_dp, R_dp, IPIV)
 end subroutine solve_rmatrix_hp_mixed
 
 subroutine solve_rmatrix_hp_4(cmat, B0, B1, nch, nlag, normfac, R00, R01, R11)

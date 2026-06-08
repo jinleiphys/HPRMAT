@@ -21,6 +21,7 @@ module gpu_solver_interface
   public :: gpu_solver_init
   public :: gpu_solver_finalize
   public :: gpu_solve_mixed
+  public :: gpu_solve_hybrid
   public :: gpu_solve_double
   public :: gpu_solve_tf32
   public :: gpu_is_available
@@ -58,6 +59,17 @@ module gpu_solver_interface
      ! Mixed precision solver (recommended)
      integer(c_int) function gpu_solve_mixed_c(A, B, n, nrhs, max_refine, tol, info) &
           bind(C, name="gpu_solve_mixed_")
+       use iso_c_binding
+       complex(c_double_complex), intent(in) :: A(*)
+       complex(c_double_complex), intent(inout) :: B(*)
+       integer(c_int), intent(in) :: n, nrhs, max_refine
+       real(c_double), intent(in) :: tol
+       integer(c_int), intent(out) :: info
+     end function
+
+     ! Hybrid solver: GPU FP32 factorization + host FP64 residual refinement
+     integer(c_int) function gpu_solve_hybrid_c(A, B, n, nrhs, max_refine, tol, info) &
+          bind(C, name="gpu_solve_hybrid_")
        use iso_c_binding
        complex(c_double_complex), intent(in) :: A(*)
        complex(c_double_complex), intent(inout) :: B(*)
@@ -234,6 +246,44 @@ contains
        call cpu_fallback_solve(A, B, n, nrhs, ierr)
     end if
   end subroutine gpu_solve_mixed
+
+  !---------------------------------------------------------
+  ! Hybrid solve: GPU FP32 factorization + host FP64 residual refinement
+  !---------------------------------------------------------
+  subroutine gpu_solve_hybrid(A, B, n, nrhs, max_refine, tol, ierr)
+    implicit none
+    complex(dp), intent(in) :: A(n, n)
+    complex(dp), intent(inout) :: B(n, nrhs)
+    integer, intent(in) :: n, nrhs, max_refine
+    real(dp), intent(in) :: tol
+    integer, intent(out) :: ierr
+
+    integer(c_int) :: c_n, c_nrhs, c_max_refine, c_info, c_ret
+    real(c_double) :: c_tol
+    integer :: init_err
+
+    if (.not. gpu_initialized) then
+       call gpu_solver_init(0, init_err)
+    end if
+
+    if (.not. gpu_available) then
+       call cpu_fallback_solve(A, B, n, nrhs, ierr)
+       return
+    end if
+
+    c_n = n
+    c_nrhs = nrhs
+    c_max_refine = max_refine
+    c_tol = tol
+
+    c_ret = gpu_solve_hybrid_c(A, B, c_n, c_nrhs, c_max_refine, c_tol, c_info)
+    ierr = c_info
+
+    if (c_ret /= 0) then
+       write(*,*) "GPU hybrid solve failed, falling back to CPU"
+       call cpu_fallback_solve(A, B, n, nrhs, ierr)
+    end if
+  end subroutine gpu_solve_hybrid
 
   !---------------------------------------------------------
   ! Solve using double precision
@@ -455,6 +505,11 @@ contains
 
     complex(dp), allocatable :: A_copy(:,:)
     integer, allocatable :: ipiv(:)
+
+    ! Falling back to the CPU: release any cached pinned (page-locked) registration the GPU
+    ! backend holds on the host matrix, so a sequence of CPU-fallback solves does not leave
+    ! a large page-locked block registered. It is re-pinned on the next successful GPU solve.
+    call gpu_host_unregister()
 
     allocate(A_copy(n, n), ipiv(n))
     A_copy = A
