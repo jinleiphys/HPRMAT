@@ -31,3 +31,8 @@ bindings/python/*.so
 # Python cache
 __pycache__/
 *.pyc
+
+# Editor backups
+*.bak
+*.swp
+*~
