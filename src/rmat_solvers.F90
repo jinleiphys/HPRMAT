@@ -12,6 +12,7 @@
 !   solver_type=3: Woodbury-Kinetic (CPU optimized, ~13% faster)
 !   solver_type=4: GPU cuSOLVER (requires GPU, ~3x faster)
 !   solver_type=5: GPU TF32 (TensorFloat-32 Tensor Core, Ampere+ GPUs)
+!   solver_type=6: Multi-GPU cusolverMg (FP64, distributes matrix across visible GPUs)
 !
 ! Reference:
 !   Based on the Lagrange-mesh R-matrix method described in:
@@ -31,6 +32,7 @@ module rmat_solvers
   public :: solve_rmatrix_woodbury   ! solver_type=3
   public :: solve_rmatrix_gpu        ! solver_type=4
   public :: solve_rmatrix_tf32       ! solver_type=5
+  public :: solve_rmatrix_multigpu   ! solver_type=6
   public :: solve_rmatrix            ! Unified interface with solver selection
 
   ! Public propagation routine
@@ -79,6 +81,8 @@ subroutine solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, solver_type, 
     call solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, nrefine)
   case (5)
     call solve_rmatrix_tf32(cmat, B_vector, nch, nlag, normfac, Rmat)
+  case (6)
+    call solve_rmatrix_multigpu(cmat, B_vector, nch, nlag, normfac, Rmat)
   case default
     call solve_rmatrix_dense(cmat, B_vector, nch, nlag, normfac, Rmat)
   end select
@@ -608,6 +612,77 @@ subroutine solve_rmatrix_gpu(cmat, B_vector, nch, nlag, normfac, Rmat, max_refin
   ! the caller's matrix buffer (cmat), not these, per the buffer-lifetime contract above.
 
 end subroutine solve_rmatrix_gpu
+
+!------------------------------------------------------------------------------
+! Multi-GPU cuSOLVER (cusolverMg) Solver (solver_type=6)
+!------------------------------------------------------------------------------
+! Full double-precision LU on a 1-D block-cyclic column distribution of the dense
+! matrix across all visible GPUs (select the device set with CUDA_VISIBLE_DEVICES).
+! The matrix is distributed, not duplicated, so the reachable dimension N scales
+! with the aggregate device memory: problems too large for a single card fit when
+! spread over several. The Fortran wrapper falls back to host ZGESV on any error.
+!------------------------------------------------------------------------------
+subroutine solve_rmatrix_multigpu(cmat, B_vector, nch, nlag, normfac, Rmat, max_refine_in)
+#ifdef GPU_ENABLED
+  use gpu_solver_interface
+#endif
+  implicit none
+  integer, intent(in) :: nch, nlag
+  real(dp), intent(in) :: normfac
+  complex(dp), intent(in) :: cmat(nch*nlag, nch*nlag), B_vector(nlag)
+  complex(dp), intent(out) :: Rmat(nch, nch)
+  ! Number of FP64 host refinement steps for the mixed-precision multi-GPU path.
+  ! Default 2 recovers full double precision; 0 returns the bare FP32 solution.
+  integer, intent(in), optional :: max_refine_in
+
+  complex(dp), allocatable :: A_copy(:,:), X_vector(:,:)
+  integer :: ich, ichp, ir, info, ntotal, max_refine
+  real(dp) :: tol
+
+  ntotal = nch * nlag
+  max_refine = 2
+  if (present(max_refine_in)) max_refine = max_refine_in
+  tol = 1.0d-12
+  allocate(A_copy(ntotal, ntotal))
+  allocate(X_vector(ntotal, nch))
+
+  ! Set up RHS (same column layout as the other backends)
+  X_vector = (0.0_dp, 0.0_dp)
+  do ich = 1, nch
+    do ir = 1, nlag
+      X_vector((ich-1)*nlag + ir, ich) = B_vector(ir)
+    end do
+  end do
+
+  ! Mixed-precision multi-GPU solve: FP32 distributed factorization + FP64 host
+  ! refinement. cmat is read (and cast to FP32) by the backend; the solution is
+  ! written into X_vector. A_copy carries the matrix for the ZGESV fallback.
+  A_copy = cmat
+#ifdef GPU_ENABLED
+  call gpu_solve_multi_mixed(A_copy, X_vector, ntotal, nch, max_refine, tol, info)
+#else
+  block
+    integer :: IPIV(ntotal)
+    call ZGESV(ntotal, nch, A_copy, ntotal, IPIV, X_vector, ntotal, info)
+  end block
+#endif
+
+  ! Extract R-matrix elements
+  Rmat = (0.0_dp, 0.0_dp)
+  if (info == 0) then
+    do ichp = 1, nch
+      do ich = 1, nch
+        do ir = 1, nlag
+          Rmat(ich, ichp) = Rmat(ich, ichp) + &
+              B_vector(ir) * X_vector(ir + (ich-1)*nlag, ichp)
+        end do
+      end do
+    end do
+    Rmat = Rmat * normfac
+  end if
+
+  deallocate(A_copy, X_vector)
+end subroutine solve_rmatrix_multigpu
 
 !------------------------------------------------------------------------------
 ! GPU TF32 (TensorFloat-32) Solver (solver_type=5)

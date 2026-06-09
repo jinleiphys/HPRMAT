@@ -30,6 +30,7 @@ module gpu_solver_interface
   public :: gpu_multi_init
   public :: gpu_multi_finalize
   public :: gpu_solve_multi
+  public :: gpu_solve_multi_mixed
   public :: gpu_solve_auto
   public :: gpu_host_unregister
 
@@ -134,6 +135,17 @@ module gpu_solver_interface
        complex(c_double_complex), intent(in) :: A(*)
        complex(c_double_complex), intent(inout) :: B(*)
        integer(c_int), intent(in) :: n, nrhs
+       integer(c_int), intent(out) :: info
+     end function
+
+     ! Multi-GPU mixed-precision solver (FP32 distributed factor + FP64 host refinement)
+     integer(c_int) function gpu_solve_multi_mixed_c(A, B, n, nrhs, max_refine, tol, info) &
+          bind(C, name="gpu_solve_multi_mixed_")
+       use iso_c_binding
+       complex(c_double_complex), intent(in) :: A(*)
+       complex(c_double_complex), intent(inout) :: B(*)
+       integer(c_int), intent(in) :: n, nrhs, max_refine
+       real(c_double), intent(in) :: tol
        integer(c_int), intent(out) :: info
      end function
 
@@ -451,6 +463,37 @@ contains
        call cpu_fallback_solve(A, B, n, nrhs, ierr)
     end if
   end subroutine gpu_solve_multi
+
+  !---------------------------------------------------------
+  ! Multi-GPU mixed-precision solver: FP32 distributed LU factorization across the
+  ! visible GPUs (cusolverMg) + FP64 host iterative refinement. max_refine controls
+  ! the number of refinement steps (0 = bare FP32 solution). Falls back to CPU ZGESV
+  ! on any backend error.
+  !---------------------------------------------------------
+  subroutine gpu_solve_multi_mixed(A, B, n, nrhs, max_refine, tol, ierr)
+    implicit none
+    complex(dp), intent(in) :: A(n, n)
+    complex(dp), intent(inout) :: B(n, nrhs)
+    integer, intent(in) :: n, nrhs, max_refine
+    real(dp), intent(in) :: tol
+    integer, intent(out) :: ierr
+
+    integer(c_int) :: c_n, c_nrhs, c_mr, c_info, c_ret
+    real(c_double) :: c_tol
+
+    c_n = n
+    c_nrhs = nrhs
+    c_mr = max_refine
+    c_tol = tol
+
+    c_ret = gpu_solve_multi_mixed_c(A, B, c_n, c_nrhs, c_mr, c_tol, c_info)
+    ierr = c_info
+
+    if (c_ret /= 0) then
+       write(*,*) "Multi-GPU mixed solve failed, falling back to CPU"
+       call cpu_fallback_solve(A, B, n, nrhs, ierr)
+    end if
+  end subroutine gpu_solve_multi_mixed
 
   !---------------------------------------------------------
   ! Auto solver (automatically chooses single/multi GPU)

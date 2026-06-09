@@ -87,6 +87,17 @@ static int **d_ipiv_mg = NULL;  // Array of pivot arrays, one per GPU
 static void **d_work_mg = NULL; // Array of workspaces, one per GPU
 static int64_t mg_lwork = 0;
 
+// Multi-GPU mixed-precision (FP32 factor + FP64 host refinement) state. Separate
+// FP32 descriptors and device arrays so the FP32 path does not clash with the FP64
+// gpu_solve_multi_ path if both are exercised in one process.
+static cudaLibMgMatrixDesc_t mg_desc_A32 = NULL;
+static cudaLibMgMatrixDesc_t mg_desc_B32 = NULL;
+static cuComplex **d_A_mg32 = NULL;   // distributed FP32 LU factors
+static cuComplex **d_B_mg32 = NULL;   // distributed FP32 RHS / correction
+static int **d_ipiv_mg32 = NULL;
+static void **d_work_mg32 = NULL;
+static int64_t mg_lwork32 = 0;
+
 // Block size for multi-GPU distribution (must be power of 2, typically 256-1024)
 #define MG_BLOCK_SIZE 256
 
@@ -952,6 +963,31 @@ int gpu_multi_finalize_() {
     }
     mg_lwork = 0;
 
+    // Free the mixed-precision (FP32) multi-GPU resources as well.
+    if (d_A_mg32) {
+        for (int i = 0; i < num_gpus; i++)
+            if (d_A_mg32[i]) { cudaSetDevice(device_ids[i]); cudaFree(d_A_mg32[i]); }
+        free(d_A_mg32); d_A_mg32 = NULL;
+    }
+    if (d_B_mg32) {
+        for (int i = 0; i < num_gpus; i++)
+            if (d_B_mg32[i]) { cudaSetDevice(device_ids[i]); cudaFree(d_B_mg32[i]); }
+        free(d_B_mg32); d_B_mg32 = NULL;
+    }
+    if (d_ipiv_mg32) {
+        for (int i = 0; i < num_gpus; i++)
+            if (d_ipiv_mg32[i]) { cudaSetDevice(device_ids[i]); cudaFree(d_ipiv_mg32[i]); }
+        free(d_ipiv_mg32); d_ipiv_mg32 = NULL;
+    }
+    if (d_work_mg32) {
+        for (int i = 0; i < num_gpus; i++)
+            if (d_work_mg32[i]) { cudaSetDevice(device_ids[i]); cudaFree(d_work_mg32[i]); }
+        free(d_work_mg32); d_work_mg32 = NULL;
+    }
+    mg_lwork32 = 0;
+    if (mg_desc_A32) { cusolverMgDestroyMatrixDesc(mg_desc_A32); mg_desc_A32 = NULL; }
+    if (mg_desc_B32) { cusolverMgDestroyMatrixDesc(mg_desc_B32); mg_desc_B32 = NULL; }
+
     // Destroy descriptors
     if (mg_desc_A) {
         cusolverMgDestroyMatrixDesc(mg_desc_A);
@@ -997,9 +1033,10 @@ int gpu_solve_multi_(
 
     // Initialize if not done
     if (!multi_gpu_initialized) {
-        int ngpu = 0;  // Use all available
-        if (gpu_multi_init_(&ngpu) != 0 || ngpu < 2) {
-            // Fall back to single-GPU
+        int ngpu = 0;  // Use all available (controlled by CUDA_VISIBLE_DEVICES)
+        if (gpu_multi_init_(&ngpu) != 0 || ngpu < 1) {
+            // No GPU at all: fall back to single-GPU mixed path. cusolverMg is
+            // run even for ngpu==1 so the 1/2/4-GPU benchmark uses one algorithm.
             fprintf(stderr, "Multi-GPU init failed, falling back to single GPU\n");
             int max_refine = 0;
             double tol = 1e-10;
@@ -1038,8 +1075,11 @@ int gpu_solve_multi_(
         mg_desc_B = NULL;
     }
 
-    // A is n x n with T_col x T_col blocks
-    status = cusolverMgCreateMatrixDesc(&mg_desc_A, n, n, T_col, T_col,
+    // A is n x n. cusolverMg getrf only supports 1-D (column) block-cyclic
+    // distribution on a 1 x P device grid, so the ROW block size must be the
+    // full row count n (rows are not distributed); only the column block size
+    // is T_col. (NVIDIA cusolverMg sample: createMatrixDesc(N, N, N, T_A, ...).)
+    status = cusolverMgCreateMatrixDesc(&mg_desc_A, n, n, n, T_col,
                                          CUDA_C_64F, mg_grid);
     if (status != CUSOLVER_STATUS_SUCCESS) {
         fprintf(stderr, "cusolverMgCreateMatrixDesc for A failed: %d\n", status);
@@ -1047,9 +1087,9 @@ int gpu_solve_multi_(
         return -1;
     }
 
-    // B is n x nrhs
+    // B is n x nrhs; same rule: row block = full n, column block = T_B_col.
     int T_B_col = (nrhs > T_col) ? T_col : nrhs;
-    status = cusolverMgCreateMatrixDesc(&mg_desc_B, n, nrhs, T_col, T_B_col,
+    status = cusolverMgCreateMatrixDesc(&mg_desc_B, n, nrhs, n, T_B_col,
                                          CUDA_C_64F, mg_grid);
     if (status != CUSOLVER_STATUS_SUCCESS) {
         fprintf(stderr, "cusolverMgCreateMatrixDesc for B failed: %d\n", status);
@@ -1189,7 +1229,11 @@ int gpu_solve_multi_(
         free(local_ncols_A); free(local_ncols_B);
         return -1;
     }
-    printf("Multi-GPU: workspace size = %ld bytes per GPU\n", lwork_getrf);
+    // cusolverMg buffer sizes are returned as a NUMBER OF ELEMENTS of the compute
+    // type (here cuDoubleComplex), not bytes; the device workspace must therefore be
+    // allocated as lwork * sizeof(cuDoubleComplex). Allocating lwork bytes under-sizes
+    // it by 16x and makes getrf scribble past the buffer (CUSOLVER_STATUS_INTERNAL_ERROR).
+    printf("Multi-GPU: workspace size = %ld elements per GPU\n", lwork_getrf);
 
     // Allocate workspace on each GPU if needed
     if (d_work_mg == NULL || lwork_getrf > mg_lwork) {
@@ -1205,7 +1249,7 @@ int gpu_solve_multi_(
         d_work_mg = (void**)malloc(num_gpus * sizeof(void*));
         for (int i = 0; i < num_gpus; i++) {
             cudaSetDevice(device_ids[i]);
-            cudaMalloc(&d_work_mg[i], lwork_getrf);
+            cudaMalloc(&d_work_mg[i], lwork_getrf * sizeof(cuDoubleComplex));
         }
         mg_lwork = lwork_getrf;
     }
@@ -1236,12 +1280,12 @@ int gpu_solve_multi_(
         return -1;
     }
 
-    // Reallocate workspace if needed
+    // Reallocate workspace if needed (lwork_getrs is also an element count).
     if (lwork_getrs > mg_lwork) {
         for (int i = 0; i < num_gpus; i++) {
             cudaSetDevice(device_ids[i]);
             cudaFree(d_work_mg[i]);
-            cudaMalloc(&d_work_mg[i], lwork_getrs);
+            cudaMalloc(&d_work_mg[i], lwork_getrs * sizeof(cuDoubleComplex));
         }
         mg_lwork = lwork_getrs;
     }
@@ -1286,6 +1330,272 @@ int gpu_solve_multi_(
     return 0;
 }
 
+// ============================================
+// Multi-GPU MIXED-PRECISION solver using cusolverMg
+// ============================================
+// Distributes the matrix across the visible GPUs and factors it in SINGLE precision
+// (cusolverMgGetrf, CUDA_C_32F), then recovers full double-precision accuracy with
+// host-side iterative refinement: the FP64 residual R = B - A X is formed on the host
+// (where double precision runs at full rate, unlike throttled consumer-card FP64) via
+// the same zgemm_ used by the single-GPU hybrid, and each correction A dX = R is solved
+// with the resident distributed FP32 factors (cusolverMgGetrs). This is the multi-GPU
+// analogue of gpu_solve_hybrid_: it keeps the FP32 factorization speed and halves the
+// per-GPU memory (8 vs 16 bytes/element), while distribution lifts the reachable N
+// beyond a single card. max_refine = 0 returns the bare FP32 solution (~1e-6).
+int gpu_solve_multi_mixed_(
+    double *h_A,
+    double *h_B,
+    int *n_ptr,
+    int *nrhs_ptr,
+    int *max_refine_ptr,
+    double *tol_ptr,
+    int *info_ptr
+) {
+    int n = *n_ptr;
+    int nrhs = *nrhs_ptr;
+    int max_refine = *max_refine_ptr;
+    double tol = *tol_ptr;
+    cusolverStatus_t status;
+
+    if (!multi_gpu_initialized) {
+        int ngpu = 0;
+        if (gpu_multi_init_(&ngpu) != 0 || ngpu < 1) {
+            // No usable GPU set: fall back to the single-GPU hybrid path.
+            return gpu_solve_hybrid_(h_A, h_B, n_ptr, nrhs_ptr, max_refine_ptr, tol_ptr, info_ptr);
+        }
+    }
+
+    cuDoubleComplex *h_A_z = (cuDoubleComplex*)h_A;
+    cuDoubleComplex *h_B_z = (cuDoubleComplex*)h_B;
+    size_t nelem = (size_t)n * nrhs;
+
+    int T_col = MG_BLOCK_SIZE;
+    int T_B_col = (nrhs > T_col) ? T_col : nrhs;
+
+    // Device grid (shared with the FP64 path) and FP32 matrix descriptors. The row
+    // block size is the full n (1-D column distribution on a 1 x P grid); see the
+    // FP64 routine for the rationale.
+    if (mg_grid == NULL) {
+        status = cusolverMgCreateDeviceGrid(&mg_grid, 1, num_gpus, device_ids,
+                                            CUDALIBMG_GRID_MAPPING_COL_MAJOR);
+        if (status != CUSOLVER_STATUS_SUCCESS) { *info_ptr = -1; return -1; }
+    }
+    if (mg_desc_A32) { cusolverMgDestroyMatrixDesc(mg_desc_A32); mg_desc_A32 = NULL; }
+    if (mg_desc_B32) { cusolverMgDestroyMatrixDesc(mg_desc_B32); mg_desc_B32 = NULL; }
+    status = cusolverMgCreateMatrixDesc(&mg_desc_A32, n, n, n, T_col, CUDA_C_32F, mg_grid);
+    if (status != CUSOLVER_STATUS_SUCCESS) { *info_ptr = -3; return -1; }
+    status = cusolverMgCreateMatrixDesc(&mg_desc_B32, n, nrhs, n, T_B_col, CUDA_C_32F, mg_grid);
+    if (status != CUSOLVER_STATUS_SUCCESS) { *info_ptr = -3; return -1; }
+
+    int64_t num_col_blocks_A = (n + T_col - 1) / T_col;
+    int64_t num_col_blocks_B = (nrhs + T_B_col - 1) / T_B_col;
+    int64_t blocks_per_gpu_A = (num_col_blocks_A + num_gpus - 1) / num_gpus;
+    int64_t blocks_per_gpu_B = (num_col_blocks_B + num_gpus - 1) / num_gpus;
+    int64_t local_ncols_A = blocks_per_gpu_A * T_col;
+    int64_t local_ncols_B = blocks_per_gpu_B * T_B_col;
+
+    if (d_A_mg32 == NULL)  { d_A_mg32  = (cuComplex**)malloc(num_gpus*sizeof(void*)); for (int i=0;i<num_gpus;i++) d_A_mg32[i]=NULL; }
+    if (d_B_mg32 == NULL)  { d_B_mg32  = (cuComplex**)malloc(num_gpus*sizeof(void*)); for (int i=0;i<num_gpus;i++) d_B_mg32[i]=NULL; }
+    if (d_ipiv_mg32 == NULL){ d_ipiv_mg32 = (int**)malloc(num_gpus*sizeof(int*));     for (int i=0;i<num_gpus;i++) d_ipiv_mg32[i]=NULL; }
+
+    for (int i = 0; i < num_gpus; i++) {
+        cudaSetDevice(device_ids[i]);
+        if (d_A_mg32[i]) cudaFree(d_A_mg32[i]);
+        if (d_B_mg32[i]) cudaFree(d_B_mg32[i]);
+        if (d_ipiv_mg32[i]) cudaFree(d_ipiv_mg32[i]);
+        if (cudaMalloc(&d_A_mg32[i], (size_t)n*local_ncols_A*sizeof(cuComplex)) != cudaSuccess ||
+            cudaMalloc(&d_B_mg32[i], (size_t)n*local_ncols_B*sizeof(cuComplex)) != cudaSuccess ||
+            cudaMalloc(&d_ipiv_mg32[i], (size_t)n*sizeof(int)) != cudaSuccess) {
+            fprintf(stderr, "GPU %d: FP32 multi-GPU allocation failed\n", i);
+            *info_ptr = -2; return -1;
+        }
+    }
+
+    // Host FP32 copy of the matrix, then block-cyclic column distribution to the GPUs.
+    cuComplex *h_A32 = (cuComplex*)malloc((size_t)n*n*sizeof(cuComplex));
+    cuDoubleComplex *h_X = (cuDoubleComplex*)malloc(nelem*sizeof(cuDoubleComplex));
+    cuDoubleComplex *h_R = (cuDoubleComplex*)malloc(nelem*sizeof(cuDoubleComplex));
+    cuComplex *h_s32 = (cuComplex*)malloc(nelem*sizeof(cuComplex));
+    if (!h_A32 || !h_X || !h_R || !h_s32) {
+        free(h_A32); free(h_X); free(h_R); free(h_s32);  // free(NULL) is a no-op
+        *info_ptr = -2; return -1;
+    }
+    for (size_t k = 0; k < (size_t)n*n; k++) {
+        h_A32[k].x = (float)h_A_z[k].x;
+        h_A32[k].y = (float)h_A_z[k].y;
+    }
+    for (int i = 0; i < num_gpus; i++) {
+        cudaSetDevice(device_ids[i]);
+        int64_t local_col = 0;
+        for (int64_t b = i; b < num_col_blocks_A; b += num_gpus) {
+            int64_t gcs = b * T_col, bw = T_col;
+            if (gcs + bw > n) bw = n - gcs;
+            for (int64_t c = 0; c < bw; c++) {
+                cudaMemcpy(d_A_mg32[i] + local_col*n, h_A32 + (gcs+c)*n,
+                           n*sizeof(cuComplex), cudaMemcpyHostToDevice);
+                local_col++;
+            }
+        }
+    }
+    for (int i = 0; i < num_gpus; i++) { cudaSetDevice(device_ids[i]); cudaDeviceSynchronize(); }
+    cudaSetDevice(device_ids[0]);
+
+    // FP32 LU factorization (distributed).
+    int64_t lwork_f = 0;
+    status = cusolverMgGetrf_bufferSize(cusolvermg_handle, n, n, (void**)d_A_mg32, 1, 1,
+                                        mg_desc_A32, d_ipiv_mg32, CUDA_C_32F, &lwork_f);
+    if (status != CUSOLVER_STATUS_SUCCESS) {
+        *info_ptr = -4; free(h_A32); free(h_X); free(h_R); free(h_s32); return -1;
+    }
+    int64_t lwork_s = 0;
+    status = cusolverMgGetrs_bufferSize(cusolvermg_handle, CUBLAS_OP_N, n, nrhs,
+                                        (void**)d_A_mg32, 1, 1, mg_desc_A32, d_ipiv_mg32,
+                                        (void**)d_B_mg32, 1, 1, mg_desc_B32, CUDA_C_32F, &lwork_s);
+    if (status != CUSOLVER_STATUS_SUCCESS) {
+        *info_ptr = -6; free(h_A32); free(h_X); free(h_R); free(h_s32); return -1;
+    }
+    int64_t lwork_need = (lwork_f > lwork_s) ? lwork_f : lwork_s;  // workspace is an ELEMENT count
+
+    if (d_work_mg32 == NULL || lwork_need > mg_lwork32) {
+        if (d_work_mg32) {
+            for (int i = 0; i < num_gpus; i++) if (d_work_mg32[i]) { cudaSetDevice(device_ids[i]); cudaFree(d_work_mg32[i]); }
+            free(d_work_mg32);
+        }
+        d_work_mg32 = (void**)malloc(num_gpus*sizeof(void*));
+        for (int i = 0; i < num_gpus; i++) d_work_mg32[i] = NULL;
+        for (int i = 0; i < num_gpus; i++) {
+            cudaSetDevice(device_ids[i]);
+            if (cudaMalloc(&d_work_mg32[i], lwork_need*sizeof(cuComplex)) != cudaSuccess) {
+                fprintf(stderr, "GPU %d: FP32 multi-GPU workspace allocation failed\n", i);
+                *info_ptr = -2; free(h_A32); free(h_X); free(h_R); free(h_s32);
+                return -1;
+            }
+        }
+        mg_lwork32 = lwork_need;
+    }
+
+    int h_info = 0;
+    status = cusolverMgGetrf(cusolvermg_handle, n, n, (void**)d_A_mg32, 1, 1, mg_desc_A32,
+                             d_ipiv_mg32, CUDA_C_32F, (void**)d_work_mg32, lwork_need, &h_info);
+    if (status != CUSOLVER_STATUS_SUCCESS || h_info != 0) {
+        fprintf(stderr, "cusolverMgGetrf (FP32) failed: status=%d info=%d\n", status, h_info);
+        *info_ptr = (h_info != 0) ? h_info : -5;
+        free(h_A32); free(h_X); free(h_R); free(h_s32);
+        return -1;
+    }
+    free(h_A32);  // factors now live on the GPUs; the host FP32 copy is no longer needed
+
+    // Mixed-precision iterative refinement. Iteration 0 is the initial FP32 solve
+    // (X starts at 0, so the residual is B); iterations 1..max_refine add corrections.
+    cuDoubleComplex c_neg1 = make_cuDoubleComplex(-1.0, 0.0);
+    cuDoubleComplex c_pos1 = make_cuDoubleComplex( 1.0, 0.0);
+    for (size_t k = 0; k < nelem; k++) h_X[k] = make_cuDoubleComplex(0.0, 0.0);
+
+    for (int iter = 0; iter <= max_refine; iter++) {
+        // FP64 residual R = B - A X on the host (iter 0: X = 0 so R = B).
+        memcpy(h_R, h_B_z, nelem*sizeof(cuDoubleComplex));
+        if (iter > 0) {
+            const char tn = 'N';
+            int gm = n, gn = nrhs, gk = n, glda = n, gldb = n, gldc = n;
+            zgemm_(&tn, &tn, &gm, &gn, &gk, &c_neg1, h_A_z, &glda, h_X, &gldb,
+                   &c_pos1, h_R, &gldc, (size_t)1, (size_t)1);
+            double max_res = 0.0;
+            for (size_t k = 0; k < nelem; k++) {
+                double m = h_R[k].x*h_R[k].x + h_R[k].y*h_R[k].y;
+                if (m > max_res) max_res = m;
+            }
+            if (sqrt(max_res) < tol) break;
+        }
+
+        // Solve A dX = R in FP32 with the resident distributed factors.
+        for (size_t k = 0; k < nelem; k++) { h_s32[k].x = (float)h_R[k].x; h_s32[k].y = (float)h_R[k].y; }
+        for (int i = 0; i < num_gpus; i++) {
+            cudaSetDevice(device_ids[i]);
+            int64_t local_col = 0;
+            for (int64_t b = i; b < num_col_blocks_B; b += num_gpus) {
+                int64_t gcs = b * T_B_col, bw = T_B_col;
+                if (gcs + bw > nrhs) bw = nrhs - gcs;
+                for (int64_t c = 0; c < bw; c++) {
+                    cudaMemcpy(d_B_mg32[i] + local_col*n, h_s32 + (gcs+c)*n,
+                               n*sizeof(cuComplex), cudaMemcpyHostToDevice);
+                    local_col++;
+                }
+            }
+        }
+        for (int i = 0; i < num_gpus; i++) { cudaSetDevice(device_ids[i]); cudaDeviceSynchronize(); }
+        cudaSetDevice(device_ids[0]);
+
+        status = cusolverMgGetrs(cusolvermg_handle, CUBLAS_OP_N, n, nrhs,
+                                 (void**)d_A_mg32, 1, 1, mg_desc_A32, d_ipiv_mg32,
+                                 (void**)d_B_mg32, 1, 1, mg_desc_B32, CUDA_C_32F,
+                                 (void**)d_work_mg32, lwork_need, &h_info);
+        if (status != CUSOLVER_STATUS_SUCCESS || h_info != 0) {
+            fprintf(stderr, "cusolverMgGetrs (FP32) failed: status=%d info=%d\n", status, h_info);
+            *info_ptr = (h_info != 0) ? h_info : -7;
+            free(h_X); free(h_R); free(h_s32);
+            return -1;
+        }
+
+        // Gather dX and accumulate X += dX in FP64.
+        for (int i = 0; i < num_gpus; i++) {
+            cudaSetDevice(device_ids[i]);
+            int64_t local_col = 0;
+            for (int64_t b = i; b < num_col_blocks_B; b += num_gpus) {
+                int64_t gcs = b * T_B_col, bw = T_B_col;
+                if (gcs + bw > nrhs) bw = nrhs - gcs;
+                for (int64_t c = 0; c < bw; c++) {
+                    cudaMemcpy(h_s32 + (gcs+c)*n, d_B_mg32[i] + local_col*n,
+                               n*sizeof(cuComplex), cudaMemcpyDeviceToHost);
+                    local_col++;
+                }
+            }
+        }
+        for (int i = 0; i < num_gpus; i++) { cudaSetDevice(device_ids[i]); cudaDeviceSynchronize(); }
+        cudaSetDevice(device_ids[0]);
+        for (size_t k = 0; k < nelem; k++) { h_X[k].x += (double)h_s32[k].x; h_X[k].y += (double)h_s32[k].y; }
+    }
+
+    // Final convergence guard. For an ill-conditioned matrix the single-precision
+    // factor can be too inaccurate for the refinement to converge (roughly when
+    // kappa * eps_fp32 > 1, i.e. kappa > ~1e7); the solver would otherwise return a
+    // wrong answer silently. Form one more host residual and, if it is still large
+    // relative to the right-hand side, signal failure so the caller falls back to a
+    // full-precision solve instead of trusting the FP32-limited result.
+    if (max_refine > 0) {
+        memcpy(h_R, h_B_z, nelem*sizeof(cuDoubleComplex));
+        const char tn = 'N';
+        int gm = n, gn = nrhs, gk = n, glda = n, gldb = n, gldc = n;
+        zgemm_(&tn, &tn, &gm, &gn, &gk, &c_neg1, h_A_z, &glda, h_X, &gldb,
+               &c_pos1, h_R, &gldc, (size_t)1, (size_t)1);
+        double max_res = 0.0, max_b = 0.0;
+        for (size_t k = 0; k < nelem; k++) {
+            double mr = h_R[k].x*h_R[k].x + h_R[k].y*h_R[k].y;
+            double mb = h_B_z[k].x*h_B_z[k].x + h_B_z[k].y*h_B_z[k].y;
+            if (mr > max_res) max_res = mr;
+            if (mb > max_b) max_b = mb;
+        }
+        if (sqrt(max_res) > 1e-6 * (sqrt(max_b) + 1.0)) {
+            fprintf(stderr, "multi-GPU mixed: refinement did not converge "
+                    "(||r||_inf/||b||_inf = %.2e); matrix likely ill-conditioned, "
+                    "caller should use a full-precision solver\n",
+                    sqrt(max_res)/(sqrt(max_b)+1.0));
+            // HPRMAT_MGPU_NO_FALLBACK is a benchmarking-only escape hatch: it returns
+            // the (inaccurate) mixed-precision result so the raw FP32-limited error can
+            // be characterized. Production runs leave it unset and fall back below.
+            if (getenv("HPRMAT_MGPU_NO_FALLBACK") == NULL) {
+                *info_ptr = 99;        // non-convergence; host RHS left untouched
+                free(h_X); free(h_R); free(h_s32);
+                return -1;             // triggers the caller's full-precision fallback
+            }
+        }
+    }
+
+    memcpy(h_B_z, h_X, nelem*sizeof(cuDoubleComplex));
+    free(h_X); free(h_R); free(h_s32);
+    *info_ptr = 0;
+    return 0;
+}
+
 // Unified solver that automatically chooses single or multi-GPU
 int gpu_solve_auto_(
     double *h_A,
@@ -1300,10 +1610,12 @@ int gpu_solve_auto_(
     int nrhs = *nrhs_ptr;
 
     // Check GPU memory availability. The device footprint is the double-precision matrix
-    // (16 N^2 bytes) plus the single-precision working copy (8 N^2), i.e. 24 N^2 for the
-    // matrices, plus the cuSOLVER workspace and the solution/residual/RHS vectors, for a
-    // total of about 26 N^2 bytes (consistent with the memory model in the manuscript).
-    size_t required_mem = (size_t)n * n * 24 + (size_t)n * nrhs * (16 * 3 + 8);
+    // (16 N^2 bytes), the single-precision working copy (8 N^2), and the single-precision
+    // cusolverDnCgetrf workspace, which the buffer-size query returns as N^2 elements
+    // (a further 8 N^2 bytes), i.e. 32 N^2 for the matrices and workspace, plus the
+    // solution/residual/RHS vectors (consistent with the 32 N^2 memory model in the
+    // manuscript, Sec. 3.4).
+    size_t required_mem = (size_t)n * n * 32 + (size_t)n * nrhs * (16 * 3 + 8);
 
     cudaDeviceProp prop;
     cudaGetDeviceProperties(&prop, 0);
@@ -1314,7 +1626,7 @@ int gpu_solve_auto_(
                 required_mem / 1e9, available_mem / 1e9);
         fprintf(stderr, "Consider using a smaller matrix or a GPU with more memory.\n");
         fprintf(stderr, "Maximum recommended matrix size for this GPU: %d x %d\n",
-                (int)sqrt(available_mem * 0.9 / 26.0), (int)sqrt(available_mem * 0.9 / 26.0));
+                (int)sqrt(available_mem * 0.9 / 32.0), (int)sqrt(available_mem * 0.9 / 32.0));
     }
 
     // Multi-GPU support is currently disabled due to cusolverMg API complexity

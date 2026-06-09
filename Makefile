@@ -34,7 +34,7 @@ OBJS = $(SRCDIR)/precision.o \
 ifeq ($(GPU_ENABLED),true)
   OBJS += $(SRCDIR)/gpu_solver_interface.o $(SRCDIR)/cusolver_interface.o
   FFLAGS += -DGPU_ENABLED
-  LIBS += -L$(CUDA_PATH)/lib64 -lcudart -lcusolver -lcublas -lstdc++
+  LIBS += -L$(CUDA_PATH)/lib64 -lcudart -lcusolver -lcusolverMg -lcublas -lstdc++
 endif
 
 # Library name
