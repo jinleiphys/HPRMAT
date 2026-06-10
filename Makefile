@@ -7,8 +7,14 @@
 -include make.inc
 
 # Default compilers (can be overridden in make.inc)
-FC ?= gfortran
-CC ?= gcc
+# Note: make has built-in defaults FC=f77 and CC=cc, so `?=` alone would never
+# fire for them; explicitly replace the built-in defaults.
+ifeq ($(origin FC),default)
+FC = gfortran
+endif
+ifeq ($(origin CC),default)
+CC = gcc
+endif
 NVCC ?= nvcc
 
 # Default flags

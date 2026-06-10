@@ -5,8 +5,10 @@
 # Include parent configuration
 -include ../make.inc
 
-# Default compilers
-FC ?= gfortran
+# Default compilers (make's built-in default is FC=f77; replace it)
+ifeq ($(origin FC),default)
+FC = gfortran
+endif
 FFLAGS ?= -O3 -fopenmp
 
 # Library path
