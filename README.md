@@ -18,8 +18,8 @@ HPRMAT is a modern, high-performance implementation of the R-matrix method for s
 
 | Feature | Description |
 |---------|-------------|
-| Multiple solver backends | Dense LAPACK, Mixed Precision, Woodbury-Kinetic, GPU cuSOLVER, GPU TF32 |
-| GPU acceleration | Up to 18x speedup using NVIDIA cuSOLVER |
+| Multiple solver backends | Dense LAPACK, Mixed Precision, Woodbury-Kinetic, GPU cuSOLVER, GPU TF32, Multi-GPU cusolverMg |
+| GPU acceleration | ~15x over the optimized CPU direct solver, ~41x over the inversion-based reference (RTX 3090, N=25600, steady state) |
 | TF32 Tensor Core | Additional speedup on Ampere+ GPUs (RTX 30/40 series) |
 | Parallel BLAS | Full utilization of multi-core CPUs via OpenBLAS |
 | Smart setup | Auto-detects GPU, CUDA, OpenBLAS; can install CUDA via conda |
@@ -31,7 +31,7 @@ HPRMAT is a modern, high-performance implementation of the R-matrix method for s
 
 ### vs. Traditional Matrix Inversion Methods
 
-Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to solve the linear system. HPRMAT uses LU factorization with forward/backward substitution, which is:
+Traditional R-matrix codes (e.g., Descouvemont 2016) use matrix inversion to solve the linear system. HPRMAT uses LU factorization with forward/backward substitution, which is:
 
 - **More numerically stable** (better condition number handling)
 - **Faster** (O(n³) for both, but smaller prefactor for LU solve)
@@ -41,7 +41,7 @@ Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to sol
 
 #### CPU Only (Apple M3 Ultra, 32 cores)
 
-| Matrix Size | Pierre | Type 1 | Type 2 | Type 3 | Best Speedup |
+| Matrix Size | Ref. | Type 1 | Type 2 | Type 3 | Best Speedup |
 |-------------|--------|--------|--------|--------|--------------|
 | 100×100 | 0.002s | 0.000s (17x) | 0.002s (1.0x) | 0.002s (1.3x) | **17x** |
 | 400×400 | 0.018s | 0.005s (3.6x) | 0.009s (2.1x) | 0.007s (2.4x) | **3.6x** |
@@ -56,24 +56,35 @@ Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to sol
 | 16000×16000 | 60.5s | 14.1s (4.3x) | 10.3s (5.9x) | 8.82s (6.9x) | **6.9x** |
 | 25600×25600 | 231.5s | 52.3s (4.4x) | 34.0s (6.8x) | 32.0s (7.2x) | **7.2x** |
 
-#### With GPU (Intel Xeon + RTX 3090)
+#### With GPU (2x Intel Xeon Gold 6248R + RTX 3090, steady state)
 
-| Matrix Size | Pierre | Type 1 | Type 2 | Type 3 | Type 4 (GPU) | Best Speedup |
+Steady-state timings: GPU context and device buffers reused across an energy
+scan, pinned host transfer, and the solver reads the caller's matrix directly
+(no host copy). CPU columns use fully multi-threaded OpenBLAS
+(OPENBLAS_NUM_THREADS=48). These are the numbers published in the CPC paper.
+
+| Matrix Size | Ref. | Type 1 | Type 2 | Type 3 | Type 4 (GPU) | Best Speedup |
 |-------------|--------|--------|--------|--------|--------------|--------------|
-| 100×100 | 0.055s | 0.036s (1.5x) | 0.113s (0.5x) | 0.050s (1.1x) | 0.364s (0.2x) | **1.5x** |
-| 400×400 | 1.102s | 1.110s (1.0x) | 1.042s (1.1x) | 0.941s (1.2x) | 0.349s (3.2x) | **3.2x** |
-| 1024×1024 | 2.403s | 2.363s (1.0x) | 2.586s (0.9x) | 2.647s (0.9x) | 1.050s (2.3x) | **2.3x** |
-| 2000×2000 | 3.466s | 3.555s (1.0x) | 3.528s (1.0x) | 3.575s (1.0x) | 1.107s (3.1x) | **3.1x** |
-| 4000×4000 | 5.196s | 4.787s (1.1x) | 5.206s (1.0x) | 4.926s (1.1x) | 1.311s (4.0x) | **4.0x** |
-| 8000×8000 | 12.4s | 9.69s (1.3x) | 7.65s (1.6x) | 7.39s (1.7x) | 2.07s (6.0x) | **6.0x** |
-| 10000×10000 | 17.4s | 10.6s (1.6x) | 9.13s (1.9x) | 8.98s (1.9x) | 2.68s (6.5x) | **6.5x** |
-| 12800×12800 | 34.4s | 15.4s (2.2x) | 11.7s (2.9x) | 13.1s (2.6x) | 3.68s (9.3x) | **9.3x** |
-| 16000×16000 | 62.9s | 21.7s (2.9x) | 15.2s (4.1x) | 17.3s (3.6x) | 4.99s (12.6x) | **12.6x** |
-| 25600×25600 | 210.0s | 105.2s (2.0x) | 40.9s (5.1x) | 39.6s (5.3x) | 11.8s (17.8x) | **17.8x** |
+| 1000×1000 | 1.061s | 1.109s (1.0x) | 1.184s (0.9x) | 1.201s (0.9x) | 0.008s (134x) | **134x** |
+| 2000×2000 | 1.508s | 1.516s (1.0x) | 1.681s (0.9x) | 1.770s (0.9x) | 0.021s (70x) | **70x** |
+| 4000×4000 | 2.765s | 2.405s (1.1x) | 2.328s (1.2x) | 2.623s (1.1x) | 0.061s (46x) | **46x** |
+| 8000×8000 | 9.306s | 5.597s (1.7x) | 4.675s (2.0x) | 5.087s (1.8x) | 0.222s (42x) | **42x** |
+| 10000×10000 | 14.409s | 7.347s (2.0x) | 5.739s (2.5x) | 6.515s (2.2x) | 0.365s (40x) | **40x** |
+| 16000×16000 | 40.103s | 15.700s (2.6x) | 11.434s (3.5x) | 15.748s (2.5x) | 1.085s (37x) | **37x** |
+| 25600×25600 | 144.948s | 52.098s (2.8x) | 41.382s (3.5x) | 48.067s (3.0x) | 3.554s (41x) | **41x** |
+
+Notes: the very large Type 4 speedups at N=1000-2000 are an artifact of
+thread-dispatch overhead in the multi-threaded CPU baseline, not a genuine GPU
+advantage; the production-regime figure is ~15x over Type 1 (and ~41x over the
+reference) at N=25600. When full double precision is required, the host-refined
+hybrid mode (`max_refine=2`) takes 9.85s at N=25600 (machine precision, still
+5.3x faster than Type 1). The multi-GPU back-end (solver_type=6) extends the
+reachable size: N=51200 on one 24 GB card (FP64 matrix kept on the host),
+N=64000 on two and N=76800 on four RTX 3090s, in full double precision.
 
 #### CPU Only (Intel i9-12900, 24 threads)
 
-| Matrix Size | Pierre | Type 1 | Type 2 | Type 3 | Best Speedup |
+| Matrix Size | Ref. | Type 1 | Type 2 | Type 3 | Best Speedup |
 |-------------|--------|--------|--------|--------|--------------|
 | 100×100 | 0.058s | 0.000s (331x) | 0.053s (1.1x) | 0.000s (301x) | **331x** |
 | 400×400 | 0.077s | 0.003s (31x) | 0.025s (3.1x) | 0.002s (38x) | **38x** |
@@ -92,7 +103,7 @@ Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to sol
 
 | Solver | Max Error | Description |
 |--------|-----------|-------------|
-| Type 1 | ~1E-18 | Machine precision (identical to Pierre's original) |
+| Type 1 | ~1E-18 | Machine precision (matches the reference code) |
 | Type 2 | ~1E-15 | Double precision (high accuracy) |
 | Type 3 | ~1E-6 | Sufficient for nuclear physics calculations |
 | Type 4 | ~1E-10 | GPU FP32 mixed precision (excellent accuracy) |
@@ -101,9 +112,13 @@ Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to sol
 
 ### Physical Validation
 
-All solvers validated against Descouvemont's reference code (CPC 200, 2016):
-- Ex1: Alpha-Alpha scattering (1 channel) - Phase shifts match to 5+ digits
-- Ex4: 12C+alpha scattering (12 channels) - Amplitudes agree within 0.1%
+All solvers validated against Descouvemont's reference code (CPC 200, 2016)
+using all five standard test cases from that package:
+- Ex1: alpha+208Pb optical model (1 channel) - machine-precision agreement (max deviation ~2E-12 for Type 1)
+- Ex2: nucleon-nucleon Reid soft-core (2 channels) - phase shifts agree to better than 1E-4 degrees
+- Ex3: 16O+44Ca coupled-channel (4 channels) - cross sections agree within 0.1%
+- Ex4: 12C+alpha inelastic (12 channels) - amplitudes agree within 0.1% (1% for Type 3)
+- Ex5: non-local Yamaguchi potential (1 channel) - machine-precision phase shifts (Type 1)
 
 ## Installation
 
@@ -183,7 +198,7 @@ Note: The `setup.sh` script auto-detects your GPU architecture. Manual configura
 
 ### Solver Selection
 
-Set `solver_type` in your input file:
+Set the module variable `solver_type` (or pass the optional `isolver` argument to `rmatrix`):
 
 ```fortran
 solver_type = 1   ! Dense LAPACK (ZGESV) - reference implementation
@@ -191,6 +206,7 @@ solver_type = 2   ! Mixed Precision (CGETRF + refinement)
 solver_type = 3   ! Woodbury-Kinetic - fastest on CPU
 solver_type = 4   ! GPU cuSOLVER (FP32) - fastest with NVIDIA GPU
 solver_type = 5   ! GPU TF32 - Tensor Core acceleration (Ampere+ GPUs)
+solver_type = 6   ! Multi-GPU cusolverMg - for matrices beyond single-card memory
 ```
 
 The GPU solver (`solver_type = 4`) runs in single precision by default. To recover full
@@ -211,24 +227,18 @@ call solve_rmatrix(cmat, B_vector, nch, nlag, normfac, Rmat, &
 | NVIDIA GPU (any) | `solver_type = 4` (GPU cuSOLVER, FP32) |
 | NVIDIA GPU, full double precision | `solver_type = 4, max_refine = 2` (host-refined hybrid) |
 | NVIDIA Ampere+ GPU (RTX 30/40) | `solver_type = 5` (GPU TF32) |
+| Matrix beyond single-GPU memory | `solver_type = 6` (multi-GPU cusolverMg, FP64 via host refinement) |
 | Debugging/validation | `solver_type = 1` (Dense LAPACK) |
 
-### Example Input
-
-```
-test_calculation.in
----
-! R-matrix coupled-channel calculation
-solver_type = 4        ! Use GPU solver
-nlag = 100             ! Lagrange points per channel
-...
-```
-
-### Running
+### Running the Examples
 
 ```bash
-cd cookie
-echo "test/test_multibin_dense.in" | ./cookie
+make examples          # build all example drivers
+cd examples/Ex1
+./example1_hp          # alpha+208Pb; prompts for l, nlag, intervals, radius, energies
+
+# or run the full validation sweep over solver types 1-3:
+cd examples && ./test_all_solvers.sh
 ```
 
 ## Theory
@@ -461,16 +471,19 @@ cd c && make
 HPRMAT/
 ├── src/
 │   ├── rmatrix_hp.F90         # Main R-matrix solver interface
-│   ├── rmat_solvers.F90       # Five solver implementations (Dense, Mixed, Woodbury, GPU, TF32)
+│   ├── rmat_solvers.F90       # Six solver implementations (Dense, Mixed, Woodbury, GPU, TF32, Multi-GPU)
 │   ├── gpu_solver_interface.F90  # CUDA cuSOLVER wrapper
 │   ├── precision.F90          # Precision definitions
 │   ├── constants.F90          # Physical constants
 │   ├── special_functions.f    # Coulomb/Whittaker functions
 │   └── angular_momentum.f     # 3j/6j/9j coefficients
 ├── examples/
-│   ├── Ex0/                   # Large matrix benchmark
+│   ├── Ex0/                   # Benchmarks
 │   │   ├── test_solver.f90    # Basic solver test
-│   │   └── benchmark_large.f90  # Performance benchmark
+│   │   ├── benchmark_large.f90  # Performance benchmark
+│   │   ├── benchmark_mgpu.f90   # Multi-GPU capacity/scaling benchmark
+│   │   ├── benchmark_mgpu_illcond.f90  # Conditioning study (Fig. 5 of the paper)
+│   │   └── profile_gpu.f90    # Per-stage GPU profiling (Table 5 of the paper)
 │   ├── Ex1/example1_hp.f90    # Alpha-Alpha scattering (1 channel)
 │   ├── Ex2/example2_hp.f90    # Reid NN potential (2 channels)
 │   ├── Ex3/example3_hp.f90    # 16O+44Ca scattering (4 channels)
@@ -489,7 +502,7 @@ HPRMAT/
 ```fortran
 use rmat_hp_mod
 
-! Set solver type (1=Dense, 2=Mixed, 3=Woodbury, 4=GPU, 5=TF32)
+! Set solver type (1=Dense, 2=Mixed, 3=Woodbury, 4=GPU, 5=TF32, 6=Multi-GPU)
 solver_type = 1
 
 ! Call R-matrix solver
@@ -502,7 +515,7 @@ call rmatrix(nc, lval, qk, eta, rmax, nr, ns, cpot, cu, &
 
 ### Comparison with Existing Codes
 
-| Feature | Descouvemont (2015) | UK PRMAT | HPRMAT |
+| Feature | Descouvemont (2016) | UK PRMAT | HPRMAT |
 |---------|--------------------|---------:|--------|
 | Target | Nuclear physics | Atomic physics | Nuclear physics |
 | Parallelization | None | MPI + OpenMP | OpenBLAS + GPU |
