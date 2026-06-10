@@ -46,7 +46,7 @@ program benchmark_mgpu
   end if
 
   write(*,'(A)') '=========================================================='
-  write(*,'(A)') '  Multi-GPU (cusolverMg, FP64) large-N benchmark'
+  write(*,'(A)') '  Multi-GPU mixed-precision (cusolverMg) large-N benchmark'
   write(*,'(A)') '=========================================================='
   write(*,'(A,I0,A,I0,A,I0,A,I0)') '  N = ', n, ',  nch = ', nch, ',  nrep = ', nrep, &
        ',  max_refine = ', max_refine

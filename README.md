@@ -93,7 +93,7 @@ Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to sol
 | Solver | Max Error | Description |
 |--------|-----------|-------------|
 | Type 1 | ~1E-18 | Machine precision (identical to Pierre's original) |
-| Type 2 | ~1E-16 | Double precision (high accuracy) |
+| Type 2 | ~1E-15 | Double precision (high accuracy) |
 | Type 3 | ~1E-6 | Sufficient for nuclear physics calculations |
 | Type 4 | ~1E-10 | GPU FP32 mixed precision (excellent accuracy) |
 | Type 5 | ~1E-10 | GPU TF32 Tensor Core (Ampere+ GPUs, slightly faster) |

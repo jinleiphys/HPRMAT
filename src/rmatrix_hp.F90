@@ -175,7 +175,8 @@ end subroutine rmat_ini
 subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
                    ncp1, ndim, nopen, twf, cf, nwf1, nwf2, nc, nvc, ncp2, cpnl, isolver)
   use rmat_hp_mod
-  use rmat_solvers, only: solve_rmatrix_woodbury, solve_rmatrix_gpu
+  use rmat_solvers, only: solve_rmatrix_woodbury, solve_rmatrix_gpu, &
+                          solve_rmatrix_tf32, solve_rmatrix_multigpu
   implicit real*8(a,b,d-h,o-z)
   implicit complex*16(c)
   dimension lval(nch), qk(nch), eta(nch), cpot(ncp1, ndim, ndim)
@@ -308,6 +309,13 @@ subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
     case (4)
       ! GPU cuSOLVER (FP32, or host-refined hybrid when gpu_max_refine > 0)
       call solve_rmatrix_gpu(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local, gpu_max_refine)
+    case (5)
+      ! GPU TF32 Tensor Core (Ampere+ GPUs)
+      call solve_rmatrix_tf32(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
+    case (6)
+      ! Multi-GPU cusolverMg: FP32 distributed factorization + FP64 host
+      ! refinement (subroutine default of 2 steps)
+      call solve_rmatrix_multigpu(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)
     case default
       ! Default to dense LAPACK
       call solve_rmatrix_hp(ch(:,:,is), B_vector, nch, nr, 1.0d0, Rmat_local)

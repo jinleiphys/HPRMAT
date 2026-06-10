@@ -199,17 +199,19 @@ end subroutine
 
 **CUDA Interface:**
 ```c
-// cusolver_interface.cu
-extern "C" void cuda_solve_complex_system_(
-    double* A_real, double* A_imag,
-    double* b_real, double* b_imag,
-    int* n, int* info)
+// cusolver_interface.cu (actual entry point; matrix and RHS are passed as
+// double-precision complex arrays, all conversion happens on the device)
+extern "C" int gpu_solve_mixed_(
+    double *h_A,        /* complex(dp) matrix, column-major */
+    double *h_B,        /* complex(dp) RHS, overwritten with solution */
+    int *n_ptr, int *nrhs_ptr, int *max_refine_ptr,
+    double *tol_ptr, int *info_ptr)
 {
-    // Allocate device memory
-    cuDoubleComplex *d_A, *d_b;
-    cuComplex *d_A_f, *d_b_f;  // FP32 versions
+    // Persistent device buffers (allocated on first call, reused after)
+    cuDoubleComplex *d_A, *d_B;
+    cuComplex *d_A_f, *d_B_f;  // FP32 versions
 
-    // Copy to device
+    // Copy to device (pinned host registration is cached)
     cudaMemcpy(d_A, h_A, ...);
 
     // Convert FP64 -> FP32 on GPU
@@ -219,27 +221,29 @@ extern "C" void cuda_solve_complex_system_(
     cusolverDnCgetrf(handle, n, n, d_A_f, n, workspace, d_ipiv, d_info);
 
     // Solve (FP32)
-    cusolverDnCgetrs(handle, CUBLAS_OP_N, n, 1, d_A_f, n, d_ipiv, d_b_f, n, d_info);
+    cusolverDnCgetrs(handle, CUBLAS_OP_N, n, nrhs, d_A_f, n, d_ipiv, d_B_f, n, d_info);
 
     // Convert FP32 -> FP64 and copy back
-    convert_c2z_kernel<<<...>>>(d_b_f, d_b, n);
-    cudaMemcpy(h_b, d_b, ...);
+    convert_c2z_kernel<<<...>>>(d_B_f, d_B, n*nrhs);
+    cudaMemcpy(h_B, d_B, ...);
 }
 ```
 
 **Fortran Interface:**
 ```fortran
 ! gpu_solver_interface.F90
-module gpu_solver_interface
-    interface
-        subroutine cuda_solve_complex_system(A_re, A_im, b_re, b_im, n, info) &
-            bind(C, name='cuda_solve_complex_system_')
-            use iso_c_binding
-            real(c_double) :: A_re(*), A_im(*), b_re(*), b_im(*)
-            integer(c_int) :: n, info
-        end subroutine
-    end interface
-end module
+interface
+   integer(c_int) function gpu_solve_mixed_c(A, B, n, nrhs, max_refine, tol, info) &
+        bind(C, name="gpu_solve_mixed_")
+     use iso_c_binding
+     complex(c_double_complex), intent(in)    :: A(*)
+     complex(c_double_complex), intent(inout) :: B(*)
+     integer(c_int), intent(in) :: n, nrhs, max_refine
+     real(c_double), intent(in) :: tol
+     integer(c_int), intent(out) :: info
+   end function
+end interface
+! Analogous bindings: gpu_solve_hybrid_ (host-refined), gpu_solve_multi_mixed_ (multi-GPU)
 ```
 
 **Performance:**
@@ -356,26 +360,35 @@ end do
 
 ### 5.3 GPU Memory Management
 
-For repeated solves, keep data on GPU:
+Device buffers, cuSOLVER handles, and the pinned host-matrix registration are
+persistent: they are created on the first call and reused across an energy scan.
+No explicit init call is needed:
 
 ```fortran
-! Initialize once
-call cuda_init_solver(n)
+use gpu_solver_interface
 
-! Repeated solves (data stays on GPU)
+! Repeated solves (buffers and handles reused automatically)
 do iter = 1, niter
-    call cuda_solve_inplace(A, b, x)
+    call gpu_solve_mixed(A, X, n, nrhs, max_refine, tol, ierr)
 end do
 
-! Cleanup
-call cuda_finalize_solver()
+! Cleanup at end of run (also releases the pinned registration)
+call gpu_solver_finalize()
 ```
 
-## 6. Future Directions
+## 6. Multi-GPU Support and Future Directions
 
-### 6.1 Multi-GPU Support
+### 6.1 Multi-GPU Support (implemented, solver_type = 6)
 
-Distribute different J (total angular momentum) values across multiple GPUs:
+For matrices beyond single-card memory, `gpu_solve_multi_mixed_` distributes the
+FP32 LU factorization across the visible GPUs with cusolverMg (1D block-cyclic
+column layout) and recovers full double precision through FP64 iterative
+refinement on the host (default 2 steps). Per-card device memory scales as
+roughly 1/P; the benefit is capacity, not wall time. See the manuscript section
+"Scalability and multi-GPU support" and `examples/Ex0/benchmark_mgpu.f90`.
+
+A complementary future direction is distributing different J (total angular
+momentum) values across GPUs, one independent system per card:
 
 ```
 GPU 0: J = 0, 4, 8, ...

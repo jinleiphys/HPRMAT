@@ -1,5 +1,6 @@
 #!/bin/bash
-# Multi-GPU (cusolverMg, FP64) capacity/scaling grid on the 4x RTX 3090 node.
+# Multi-GPU mixed-precision (cusolverMg FP32 factor + FP64 host refinement)
+# capacity/scaling grid on the 4x RTX 3090 node.
 # For each (N, #GPUs) that fits in aggregate device memory, records wall time,
 # accuracy vs the manufactured solution, and the peak per-GPU memory (nvidia-smi).
 # Predicted-OOM cells are skipped so the Fortran wrapper never drops to the slow
