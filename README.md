@@ -97,6 +97,7 @@ Traditional R-matrix codes (e.g., Descouvemont 2015) use matrix inversion to sol
 | Type 3 | ~1E-6 | Sufficient for nuclear physics calculations |
 | Type 4 | ~1E-10 | GPU FP32 mixed precision (excellent accuracy) |
 | Type 5 | ~1E-10 | GPU TF32 Tensor Core (Ampere+ GPUs, slightly faster) |
+| Type 6 | ~1E-14 | Multi-GPU (cusolverMg FP32 factorization + FP64 host refinement, default 2 steps); for matrices beyond single-card memory |
 
 ### Physical Validation
 
@@ -519,27 +520,31 @@ call rmatrix(nc, lval, qk, eta, rmax, nr, ns, cpot, cu, &
 ## Limitations
 
 - GPU solver requires NVIDIA GPU with CUDA support
-- Single-GPU implementation (multi-GPU planned)
 - Dense matrix storage (sparse methods not effective due to LU fill-in)
+- Multi-GPU support (solver_type = 6, cusolverMg) distributes the FP32
+  factorization across visible GPUs and refines in FP64 on the host; its
+  benefit is capacity (per-card memory ~1/P), not wall time
 
 ## Citation
 
 If you use HPRMAT in your research, please cite:
 
 ```bibtex
-@article{hprmat2025,
+@article{hprmat2026,
   title={HPRMAT: A high-performance R-matrix solver with GPU acceleration
          for coupled-channel problems in nuclear physics},
   author={Lei, Jin},
   journal={Computer Physics Communications},
-  year={2025},
-  note={In preparation}
+  year={2026},
+  eprint={2512.11590},
+  archivePrefix={arXiv},
+  note={in revision}
 }
 ```
 
 ## License
 
-[To be determined]
+MIT License. See the [LICENSE](LICENSE) file for details.
 
 ## Authors
 

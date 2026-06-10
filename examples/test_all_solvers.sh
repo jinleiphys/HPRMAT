@@ -6,7 +6,7 @@ for solver in 1 2 3; do
     echo "===== Solver Type $solver ====="
     
     # Ex1
-    echo "--- Ex1 (Alpha-Alpha Scattering) ---"
+    echo "--- Ex1 (alpha+208Pb optical model) ---"
     cd Ex1
     # Modify solver_type in the code dynamically by using sed to replace the line
     sed -i.bak "s/solver_type = [0-9]/solver_type = $solver/" example1_hp.f90 2>/dev/null || \

@@ -1629,20 +1629,10 @@ int gpu_solve_auto_(
                 (int)sqrt(available_mem * 0.9 / 32.0), (int)sqrt(available_mem * 0.9 / 32.0));
     }
 
-    // Multi-GPU support is currently disabled due to cusolverMg API complexity
-    // Single GPU can handle up to ~30k x 30k matrices on RTX 3090 (24GB)
-    // TODO: Re-enable multi-GPU once cusolverMg is properly configured
-#if 0 && CUDART_VERSION >= 12000
-    int device_count = gpu_get_device_count_();
-    if (device_count >= 2 && n > 20000) {
-        printf("Using multi-GPU solver (%d GPUs) for n=%d\n", device_count, n);
-        int ret = gpu_solve_multi_(h_A, h_B, n_ptr, nrhs_ptr, info_ptr);
-        if (ret == 0) {
-            return 0;  // Success
-        }
-        printf("Multi-GPU failed, falling back to single-GPU\n");
-    }
-#endif
+    // Multi-GPU distribution is deliberately not auto-dispatched here. The
+    // distributed mixed-precision back-end (gpu_solve_multi_mixed_, solver_type 6)
+    // must be selected explicitly: its benefit is capacity (per-card memory ~1/P),
+    // not wall time, so the right choice depends on the problem, not on n alone.
 
     // Use single-GPU mixed precision solver
     return gpu_solve_mixed_(h_A, h_B, n_ptr, nrhs_ptr, max_refine_ptr, tol_ptr, info_ptr);

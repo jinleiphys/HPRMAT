@@ -1,12 +1,14 @@
 !------------------------------------------------------------------------------
 ! benchmark_mgpu.f90
-! Large-N multi-GPU (cusolverMg, FP64) capacity/scaling benchmark.
+! Large-N multi-GPU mixed-precision (cusolverMg FP32 factorization + FP64 host
+! refinement) capacity/scaling benchmark.
 !
 ! Solves a dense complex system A X = B of dimension N with nch right-hand sides
 ! using the cusolverMg backend (solver_type 6), distributing A across the GPUs
-! made visible by CUDA_VISIBLE_DEVICES. Accuracy is checked by the scaled
-! residual max|A X - B| / max|B| (one ZGEMM), so no expensive reference solve or
-! explicit inverse is needed and arbitrarily large N can be validated.
+! made visible by CUDA_VISIBLE_DEVICES. Accuracy is checked against a
+! manufactured exact solution (X_exact = 1, so b is the row sum of A): the
+! forward error max|X - 1| needs no reference solve or explicit inverse, so
+! arbitrarily large N can be validated.
 !
 ! Usage:  benchmark_mgpu  N  nch  [nrep]
 !   N    : matrix dimension
