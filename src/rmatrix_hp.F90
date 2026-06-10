@@ -19,6 +19,9 @@
 !   solver_type = 2: Mixed Precision (slightly faster)
 !   solver_type = 3: Woodbury-Kinetic (CPU optimized)
 !   solver_type = 4: GPU cuSOLVER (fastest with GPU)
+!   solver_type = 5: GPU TF32 Tensor Core (Ampere+ GPUs)
+!   solver_type = 6: Multi-GPU cusolverMg (FP32 distributed factorization
+!                    + FP64 host refinement; for N beyond single-card memory)
 !
 ! Author: Jin Lei
 ! Date: December 2025
@@ -166,7 +169,8 @@ end subroutine rmat_ini
 !
 ! Extra parameter:
 !   isolver - Optional solver type (1=Dense LAPACK, 2=Mixed Precision,
-!             3=Woodbury-Kinetic, 4=GPU cuSOLVER)
+!             3=Woodbury-Kinetic, 4=GPU cuSOLVER, 5=GPU TF32,
+!             6=Multi-GPU cusolverMg)
 !------------------------------------------------------------------------------
 subroutine rmatrix(nch, lval, qk, eta, rmax, nr, ns, cpot, cu, &
                    ncp1, ndim, nopen, twf, cf, nwf1, nwf2, nc, nvc, ncp2, cpnl, isolver)
